@@ -11,6 +11,7 @@ interface LinkData {
   updatedAt: number
   clicks: number
   status: "draft" | "active"
+  qrCode?: string // Base64 data URL of the QR code image
 }
 
 // Use Vercel KV/Upstash in production, local storage in development
@@ -108,7 +109,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json()
-    const { slug, destination, status: linkStatus = "active" } = body
+    const { slug, destination, status: linkStatus = "active", qrCode } = body
 
     if (!slug || !destination) {
       return NextResponse.json(
@@ -151,6 +152,7 @@ export async function POST(request: NextRequest) {
       updatedAt: now,
       clicks: 0,
       status: linkStatus === "draft" ? "draft" : "active",
+      ...(qrCode && { qrCode }), // Store QR code if provided
     }
 
     await storage.set(`link:${slug}`, linkData)
@@ -175,7 +177,7 @@ export async function PUT(request: NextRequest) {
 
   try {
     const body = await request.json()
-    const { slug, destination, status: newStatus } = body
+    const { slug, destination, status: newStatus, qrCode } = body
 
     if (!slug) {
       return NextResponse.json(
@@ -206,6 +208,7 @@ export async function PUT(request: NextRequest) {
       ...existing,
       ...(destination && { destination }),
       ...(newStatus && { status: newStatus }),
+      ...(qrCode && { qrCode }), // Update QR code if provided
       updatedAt: Date.now(),
     }
 

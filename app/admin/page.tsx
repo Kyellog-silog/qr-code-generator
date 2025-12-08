@@ -15,7 +15,10 @@ import {
   RefreshCw,
   Link as LinkIcon,
   MousePointer2,
-  ArrowLeft
+  ArrowLeft,
+  QrCode,
+  X,
+  Download
 } from "lucide-react"
 import { ThemeToggle } from "@/components/theme-toggle"
 import Link from "next/link"
@@ -26,19 +29,18 @@ interface LinkData {
   createdAt: number
   updatedAt: number
   clicks: number
+  qrCode?: string
 }
 
 export default function AdminPage() {
   const [links, setLinks] = useState<LinkData[]>([])
   const [loading, setLoading] = useState(true)
-  const [creating, setCreating] = useState(false)
   const [editingSlug, setEditingSlug] = useState<string | null>(null)
   const [copiedSlug, setCopiedSlug] = useState<string | null>(null)
   const [isLocal, setIsLocal] = useState(false)
+  const [viewingQR, setViewingQR] = useState<LinkData | null>(null)
   
   // Form states
-  const [newSlug, setNewSlug] = useState("")
-  const [newDestination, setNewDestination] = useState("")
   const [editDestination, setEditDestination] = useState("")
   const [error, setError] = useState("")
 
@@ -63,39 +65,6 @@ export default function AdminPage() {
   useEffect(() => {
     fetchLinks()
   }, [])
-
-  const createLink = async () => {
-    if (!newSlug.trim() || !newDestination.trim()) {
-      setError("Both slug and destination are required")
-      return
-    }
-
-    setCreating(true)
-    setError("")
-
-    try {
-      const res = await fetch("/api/links", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slug: newSlug.trim(), destination: newDestination.trim() }),
-      })
-
-      const data = await res.json()
-
-      if (!res.ok) {
-        setError(data.error || "Failed to create link")
-        return
-      }
-
-      setNewSlug("")
-      setNewDestination("")
-      fetchLinks()
-    } catch (err) {
-      setError("Failed to create link")
-    } finally {
-      setCreating(false)
-    }
-  }
 
   const updateLink = async (slug: string) => {
     if (!editDestination.trim()) {
@@ -152,13 +121,12 @@ export default function AdminPage() {
     setTimeout(() => setCopiedSlug(null), 2000)
   }
 
-  const generateRandomSlug = () => {
-    const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
-    let result = ""
-    for (let i = 0; i < 6; i++) {
-      result += chars.charAt(Math.floor(Math.random() * chars.length))
-    }
-    setNewSlug(result)
+  const downloadQR = (link: LinkData) => {
+    if (!link.qrCode) return
+    const a = document.createElement("a")
+    a.href = link.qrCode
+    a.download = `qr-${link.slug}.png`
+    a.click()
   }
 
   const formatDate = (timestamp: number) => {
@@ -200,79 +168,6 @@ export default function AdminPage() {
             </div>
           )}
         </div>
-
-        {/* Create New Link */}
-        <Card className="mb-8 bg-card/80 backdrop-blur-sm border-border shadow-xl">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Plus className="h-5 w-5 text-secondary" />
-              Create New Link
-            </CardTitle>
-            <CardDescription>
-              The slug (e.g., "abc123") stays permanent. You can change the destination anytime.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="slug">Short URL Slug</Label>
-                <div className="flex gap-2 mt-1">
-                  <div className="flex-1 relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">/r/</span>
-                    <Input
-                      id="slug"
-                      placeholder="abc123"
-                      value={newSlug}
-                      onChange={(e) => setNewSlug(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))}
-                      className="pl-9"
-                    />
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    onClick={generateRandomSlug}
-                    title="Generate random slug"
-                  >
-                    <RefreshCw className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-              <div>
-                <Label htmlFor="destination">Destination URL</Label>
-                <Input
-                  id="destination"
-                  placeholder="https://example.com/your-long-url"
-                  value={newDestination}
-                  onChange={(e) => setNewDestination(e.target.value)}
-                  className="mt-1"
-                />
-              </div>
-            </div>
-            
-            {error && (
-              <p className="text-sm text-red-500">{error}</p>
-            )}
-
-            <Button
-              onClick={createLink}
-              disabled={creating || !newSlug.trim() || !newDestination.trim()}
-              className="bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-600 hover:to-cyan-600 text-white"
-            >
-              {creating ? (
-                <>
-                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                  Creating...
-                </>
-              ) : (
-                <>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Create Link
-                </>
-              )}
-            </Button>
-          </CardContent>
-        </Card>
 
         {/* Links List */}
         <Card className="bg-card/80 backdrop-blur-sm border-border shadow-xl">
@@ -377,6 +272,17 @@ export default function AdminPage() {
                       </div>
 
                       <div className="flex gap-1">
+                        {link.qrCode && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-secondary hover:text-secondary"
+                            onClick={() => setViewingQR(link)}
+                            title="View QR Code"
+                          >
+                            <QrCode className="h-4 w-4" />
+                          </Button>
+                        )}
                         <Button
                           variant="ghost"
                           size="icon"
@@ -405,6 +311,69 @@ export default function AdminPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* QR Code Modal */}
+      {viewingQR && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <Card className="bg-card/95 backdrop-blur-sm border-border shadow-2xl max-w-md w-full">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  <QrCode className="h-5 w-5 text-secondary" />
+                  QR Code
+                </CardTitle>
+                <CardDescription>
+                  /r/{viewingQR.slug}
+                </CardDescription>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setViewingQR(null)}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </CardHeader>
+            <CardContent className="flex flex-col items-center gap-4">
+              {viewingQR.qrCode ? (
+                <>
+                  <div className="p-4 bg-white rounded-xl shadow-lg">
+                    <img
+                      src={viewingQR.qrCode}
+                      alt={`QR code for ${viewingQR.slug}`}
+                      className="w-64 h-64"
+                    />
+                  </div>
+                  <p className="text-sm text-muted-foreground text-center max-w-xs truncate">
+                    → {viewingQR.destination}
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={() => downloadQR(viewingQR)}
+                      className="bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-600 hover:to-cyan-600"
+                    >
+                      <Download className="h-4 w-4 mr-2" />
+                      Download
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        copyLink(viewingQR.slug)
+                        setViewingQR(null)
+                      }}
+                    >
+                      <Copy className="h-4 w-4 mr-2" />
+                      Copy Link
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <p className="text-muted-foreground">No QR code saved for this link</p>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   )
 }

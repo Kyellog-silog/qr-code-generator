@@ -346,6 +346,19 @@ export default function QRGenerator() {
     validateInput()
   }, [validateInput])
 
+  // Save QR code to backend for managed links
+  const saveQRCodeToBackend = async (slug: string, qrDataUrl: string) => {
+    try {
+      await fetch("/api/links", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slug, qrCode: qrDataUrl }),
+      })
+    } catch (error) {
+      console.error("Failed to save QR code to backend:", error)
+    }
+  }
+
   const generateQRCode = async () => {
     const qrString = generateQRString()
     
@@ -372,6 +385,11 @@ export default function QRGenerator() {
 
         const dataUrl = canvas.toDataURL()
         setQrCodeUrl(dataUrl)
+        
+        // Save QR code to backend if this is a managed link
+        if (activeManagedLink) {
+          saveQRCodeToBackend(activeManagedLink.slug, dataUrl)
+        }
       }
     } catch (error) {
       console.error("Error generating QR code:", error)

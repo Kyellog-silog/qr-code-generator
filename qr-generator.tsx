@@ -218,12 +218,17 @@ export default function QRGenerator() {
     
     switch (activeTab) {
       case "url":
-        const urlPattern = /^(https?:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w \.-]*)*\/?$/i
-        setValidationState(urlPattern.test(qrData.url) ? "valid" : "invalid")
+        // Simple URL validation - avoid complex regex that can freeze
+        const url = qrData.url.trim()
+        const hasValidDomain = url.includes(".") && url.length > 3
+        const noSpaces = !url.includes(" ")
+        setValidationState(hasValidDomain && noSpaces ? "valid" : "invalid")
         break
       case "phone":
-        const phonePattern = /^[\+]?[(]?[0-9]{1,4}[)]?[-\s\.]?[0-9]{1,4}[-\s\.]?[0-9]{1,9}$/
-        setValidationState(phonePattern.test(qrData.phone) ? "valid" : "invalid")
+        // Simple phone validation
+        const phone = qrData.phone.replace(/[\s\-\(\)\.]/g, "")
+        const isValidPhone = /^\+?[0-9]{6,15}$/.test(phone)
+        setValidationState(isValidPhone ? "valid" : "invalid")
         break
       case "location":
         if (qrData.location.useDirectLink) {
@@ -281,6 +286,8 @@ export default function QRGenerator() {
       link.download = `qr-code-${activeTab}.png`
       link.href = qrCodeUrl
       link.click()
+      // Save to history on download
+      addToHistory()
     }
   }
 
@@ -290,12 +297,18 @@ export default function QRGenerator() {
       await navigator.clipboard.writeText(qrString)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
+      // Save to history on copy
+      addToHistory()
     }
   }
 
   const addToHistory = () => {
     const qrString = generateQRString()
     if (!qrString || !qrCodeUrl) return
+
+    // Check if this exact data already exists in history (avoid duplicates)
+    const existingIndex = history.findIndex(item => item.data === qrString)
+    if (existingIndex === 0) return // Already the most recent, skip
 
     const newItem: QRHistoryItem = {
       id: Date.now().toString(),
@@ -305,7 +318,9 @@ export default function QRGenerator() {
       qrCodeUrl: qrCodeUrl,
     }
 
-    const updatedHistory = [newItem, ...history].slice(0, 10) // Keep last 10
+    // Remove duplicate if exists elsewhere in history
+    const filteredHistory = history.filter(item => item.data !== qrString)
+    const updatedHistory = [newItem, ...filteredHistory].slice(0, 10) // Keep last 10
     setHistory(updatedHistory)
     localStorage.setItem("qr-history", JSON.stringify(updatedHistory))
   }
@@ -339,14 +354,6 @@ export default function QRGenerator() {
   useEffect(() => {
     generateQRCode()
   }, [qrData, activeTab, errorLevel, size, qrColors])
-
-  // Auto-save to history when QR code is generated
-  useEffect(() => {
-    if (qrCodeUrl && hasValidContent()) {
-      const timeoutId = setTimeout(addToHistory, 1000) // Debounce
-      return () => clearTimeout(timeoutId)
-    }
-  }, [qrCodeUrl])
 
   const updateQRData = (field: string, value: any) => {
     setQRData((prev) => ({
@@ -483,9 +490,9 @@ export default function QRGenerator() {
                 Choose the type of content and fill in the details
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-6">
               <Tabs value={activeTab} onValueChange={setActiveTab}>
-                <TabsList className="grid grid-cols-4 mb-6 bg-muted border border-border p-1">
+                <TabsList className="grid grid-cols-4 mb-6 mt-2 bg-muted border border-border p-1">
                   <TabsTrigger
                     value="text"
                     className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-emerald-500 data-[state=active]:to-cyan-500 data-[state=active]:text-white text-muted-foreground hover:text-foreground transition-all duration-300"

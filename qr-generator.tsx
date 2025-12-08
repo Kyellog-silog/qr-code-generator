@@ -20,7 +20,8 @@ interface QRData {
     latitude: string
     longitude: string
     mapsUrl: string
-    useDirectLink: boolean
+    address: string
+    inputType: "link" | "coordinates" | "address"
   }
 }
 
@@ -63,7 +64,7 @@ export default function QRGenerator() {
     text: "",
     url: "",
     phone: "",
-    location: { latitude: "", longitude: "", mapsUrl: "", useDirectLink: true },
+    location: { latitude: "", longitude: "", mapsUrl: "", address: "", inputType: "address" },
   })
   const [qrCodeUrl, setQrCodeUrl] = useState("")
   const [errorLevel, setErrorLevel] = useState<"L" | "M" | "Q" | "H">("M")
@@ -81,9 +82,19 @@ export default function QRGenerator() {
     const savedHistory = localStorage.getItem("qr-history")
     if (savedHistory) {
       try {
-        setHistory(JSON.parse(savedHistory))
+        const parsed = JSON.parse(savedHistory)
+        // Validate structure before setting
+        if (Array.isArray(parsed) && parsed.every(item => 
+          typeof item.id === 'string' && 
+          typeof item.type === 'string' &&
+          typeof item.data === 'string' &&
+          typeof item.timestamp === 'number'
+        )) {
+          setHistory(parsed)
+        }
       } catch {
-        // Invalid JSON, ignore
+        // Invalid JSON, clear corrupted data
+        localStorage.removeItem("qr-history")
       }
     }
   }, [])
@@ -137,21 +148,29 @@ export default function QRGenerator() {
     return url.includes("goo.gl") || url.includes("maps.app.goo.gl")
   }
 
+  // Check if input looks like a Google Maps URL
+  const isGoogleMapsUrl = (input: string): boolean => {
+    return input.includes("google.com/maps") || 
+           input.includes("maps.google.com") || 
+           input.includes("goo.gl") || 
+           input.includes("maps.app.goo.gl")
+  }
+
   // Handle Maps URL input and extract coordinates if possible
   const handleMapsUrlChange = (url: string) => {
     // Try to parse coordinates from the URL
     const coords = parseCoordinatesFromUrl(url)
     
     if (coords) {
-      // Full URL with coordinates - extract them
+      // Full URL with coordinates - extract them and clear other fields
       setQRData(prev => ({
         ...prev,
         location: {
-          ...prev.location,
           mapsUrl: url,
           latitude: coords.lat,
           longitude: coords.lng,
-          useDirectLink: false, // Use coordinates since we have them
+          address: "",
+          inputType: "coordinates",
         }
       }))
     } else {
@@ -159,12 +178,59 @@ export default function QRGenerator() {
       setQRData(prev => ({
         ...prev,
         location: {
-          ...prev.location,
           mapsUrl: url,
-          useDirectLink: true, // Use the URL directly
+          address: "",
+          latitude: "",
+          longitude: "",
+          inputType: "link",
         }
       }))
     }
+  }
+
+  // Handle plain address input
+  const handleAddressChange = (address: string) => {
+    setQRData(prev => ({
+      ...prev,
+      location: {
+        ...prev.location,
+        address: address,
+        // Clear other fields when typing address
+        mapsUrl: "",
+        latitude: "",
+        longitude: "",
+        inputType: "address",
+      }
+    }))
+  }
+
+  // Handle coordinate input
+  const handleCoordinateChange = (field: "latitude" | "longitude", value: string) => {
+    setQRData(prev => ({
+      ...prev,
+      location: {
+        ...prev.location,
+        [field]: value,
+        // Clear other fields when entering coordinates
+        address: "",
+        mapsUrl: "",
+        inputType: "coordinates",
+      }
+    }))
+  }
+
+  // Clear all location fields
+  const clearLocationFields = () => {
+    setQRData(prev => ({
+      ...prev,
+      location: {
+        latitude: "",
+        longitude: "",
+        mapsUrl: "",
+        address: "",
+        inputType: "address",
+      }
+    }))
   }
 
   const generateQRString = () => {
@@ -176,16 +242,29 @@ export default function QRGenerator() {
       case "phone":
         return qrData.phone.trim() ? `tel:${qrData.phone}` : ""
       case "location":
-        // If using direct link (shortened URL or user preference)
-        if (qrData.location.useDirectLink && qrData.location.mapsUrl.trim()) {
-          return qrData.location.mapsUrl.trim()
+        const { inputType, mapsUrl, latitude, longitude, address } = qrData.location
+        
+        // If using a direct Google Maps link
+        if (inputType === "link" && mapsUrl.trim()) {
+          return mapsUrl.trim()
         }
-        // Use coordinates to generate a universal Google Maps URL
-        const lat = qrData.location.latitude
-        const lng = qrData.location.longitude
-        if (lat && lng) {
-          return `https://www.google.com/maps?q=${lat},${lng}`
+        
+        // If using coordinates
+        if (inputType === "coordinates" && latitude && longitude) {
+          return `https://www.google.com/maps?q=${latitude},${longitude}`
         }
+        
+        // If using a plain text address - encode it for Google Maps search
+        if (inputType === "address" && address.trim()) {
+          // Clean up the address: remove extra whitespace, normalize line breaks
+          const cleanAddress = address
+            .split(/[\n\r]+/)
+            .map(line => line.trim())
+            .filter(line => line.length > 0)
+            .join(", ")
+          return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(cleanAddress)}`
+        }
+        
         return ""
       default:
         return ""
@@ -201,9 +280,11 @@ export default function QRGenerator() {
       case "phone":
         return qrData.phone.trim().length > 0
       case "location":
-        // Valid if we have a direct link OR coordinates
-        return (qrData.location.useDirectLink && qrData.location.mapsUrl.trim().length > 0) ||
-               (qrData.location.latitude.trim().length > 0 && qrData.location.longitude.trim().length > 0)
+        const { inputType, mapsUrl, latitude, longitude, address } = qrData.location
+        // Valid if we have an address, a direct link, OR coordinates
+        return (inputType === "address" && address.trim().length > 0) ||
+               (inputType === "link" && mapsUrl.trim().length > 0) ||
+               ((inputType === "coordinates") && latitude.trim().length > 0 && longitude.trim().length > 0)
       default:
         return false
     }
@@ -231,12 +312,16 @@ export default function QRGenerator() {
         setValidationState(isValidPhone ? "valid" : "invalid")
         break
       case "location":
-        if (qrData.location.useDirectLink) {
-          setValidationState(qrData.location.mapsUrl.includes("google") || qrData.location.mapsUrl.includes("goo.gl") ? "valid" : "invalid")
-        } else {
-          const lat = parseFloat(qrData.location.latitude)
-          const lng = parseFloat(qrData.location.longitude)
+        const { inputType: locType, mapsUrl: locUrl, latitude: locLat, longitude: locLng, address: locAddr } = qrData.location
+        if (locType === "link") {
+          setValidationState(locUrl.includes("google") || locUrl.includes("goo.gl") ? "valid" : "invalid")
+        } else if (locType === "coordinates") {
+          const lat = parseFloat(locLat)
+          const lng = parseFloat(locLng)
           setValidationState(lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180 ? "valid" : "invalid")
+        } else if (locType === "address") {
+          // Address is valid if it has some content (at least 5 chars for a basic address)
+          setValidationState(locAddr.trim().length >= 5 ? "valid" : "invalid")
         }
         break
       default:
@@ -362,14 +447,20 @@ export default function QRGenerator() {
     }))
   }
 
-  const updateNestedQRData = (parent: string, field: string, value: any) => {
-    setQRData((prev) => ({
-      ...prev,
-      [parent]: {
-        ...prev[parent as keyof QRData],
-        [field]: value,
-      },
-    }))
+  const updateNestedQRData = (parent: keyof QRData, field: string, value: string | boolean) => {
+    setQRData((prev) => {
+      const parentValue = prev[parent]
+      if (typeof parentValue === "object" && parentValue !== null) {
+        return {
+          ...prev,
+          [parent]: {
+            ...parentValue,
+            [field]: value,
+          },
+        }
+      }
+      return prev
+    })
   }
 
   const getValidationClasses = () => {
@@ -587,28 +678,49 @@ export default function QRGenerator() {
                 </TabsContent>
 
                 <TabsContent value="location" className="space-y-4 animate-in fade-in-50 duration-300">
-                  <div>
-                    <Label className="text-foreground font-medium" htmlFor="maps-url">
+                  {/* Header with Clear Button */}
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-muted-foreground">
+                      Fill in <span className="font-medium text-foreground">one</span> of the options below. Editing any field will clear the others.
+                    </p>
+                    {hasValidContent() && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={clearLocationFields}
+                        className="text-xs text-muted-foreground hover:text-destructive h-7 px-2"
+                      >
+                        <Trash2 className="h-3 w-3 mr-1" />
+                        Clear
+                      </Button>
+                    )}
+                  </div>
+
+                  {/* Address Input - Primary */}
+                  <div className={`p-3 rounded-lg border transition-all duration-300 ${qrData.location.inputType === "address" && qrData.location.address ? "border-secondary bg-secondary/5" : "border-transparent"}`}>
+                    <Label className="text-foreground font-medium" htmlFor="address">
                       <div className="flex items-center gap-2">
-                        <Link className="h-4 w-4" />
-                        Google Maps Link
+                        <MapPin className="h-4 w-4" />
+                        Street Address
+                        {qrData.location.inputType === "address" && qrData.location.address && (
+                          <span className="text-xs bg-secondary/20 text-secondary px-2 py-0.5 rounded-full">Active</span>
+                        )}
                       </div>
                     </Label>
-                    <Input
-                      className={`bg-input text-foreground placeholder:text-muted-foreground transition-all duration-300 ${getValidationClasses()}`}
-                      id="maps-url"
-                      placeholder="Paste Google Maps share link (e.g., https://maps.app.goo.gl/...)"
-                      value={qrData.location.mapsUrl}
-                      onChange={(e) => handleMapsUrlChange(e.target.value)}
+                    <Textarea
+                      className={`bg-input text-foreground placeholder:text-muted-foreground transition-all duration-300 mt-2 ${qrData.location.inputType === "address" && qrData.location.address ? getValidationClasses() : "border-border"}`}
+                      id="address"
+                      placeholder="Enter full address, e.g.:&#10;151 W. 30th St, 3rd Floor&#10;New York, NY 10001"
+                      value={qrData.location.address}
+                      onChange={(e) => handleAddressChange(e.target.value)}
+                      rows={3}
                     />
                     <p className="text-xs text-muted-foreground mt-1">
-                      {isShortenedMapsUrl(qrData.location.mapsUrl) 
-                        ? "Shortened link detected - will be used directly in QR code"
-                        : "Paste any Google Maps link - coordinates will be extracted if available"}
+                      Works with Google Maps and Apple Maps on all devices
                     </p>
-                    {validationState === "valid" && hasValidContent() && (
+                    {validationState === "valid" && qrData.location.inputType === "address" && hasValidContent() && (
                       <p className="text-xs text-green-500 mt-1 flex items-center gap-1">
-                        <Check className="h-3 w-3" /> Valid location
+                        <Check className="h-3 w-3" /> Valid address
                       </p>
                     )}
                   </div>
@@ -618,50 +730,93 @@ export default function QRGenerator() {
                       <span className="w-full border-t border-border" />
                     </div>
                     <div className="relative flex justify-center text-xs uppercase">
-                      <span className="bg-card px-2 text-muted-foreground">or enter coordinates manually</span>
+                      <span className="bg-card px-2 text-muted-foreground">or</span>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <Label className="text-foreground font-medium" htmlFor="latitude">
-                        Latitude
-                      </Label>
-                      <Input
-                        className="bg-input border-border text-foreground placeholder:text-muted-foreground focus:border-secondary focus:ring-secondary/20"
-                        id="latitude"
-                        placeholder="40.7128"
-                        value={qrData.location.latitude}
-                        onChange={(e) => {
-                          updateNestedQRData("location", "latitude", e.target.value)
-                          updateNestedQRData("location", "useDirectLink", false)
-                        }}
-                      />
+                  {/* Google Maps Link */}
+                  <div className={`p-3 rounded-lg border transition-all duration-300 ${(qrData.location.inputType === "link" || qrData.location.inputType === "coordinates") && qrData.location.mapsUrl ? "border-secondary bg-secondary/5" : "border-transparent"}`}>
+                    <Label className="text-foreground font-medium" htmlFor="maps-url">
+                      <div className="flex items-center gap-2">
+                        <Link className="h-4 w-4" />
+                        Google Maps Link
+                        {qrData.location.inputType === "link" && qrData.location.mapsUrl && (
+                          <span className="text-xs bg-secondary/20 text-secondary px-2 py-0.5 rounded-full">Active</span>
+                        )}
+                      </div>
+                    </Label>
+                    <Input
+                      className={`bg-input text-foreground placeholder:text-muted-foreground transition-all duration-300 mt-2 ${qrData.location.inputType === "link" && qrData.location.mapsUrl ? getValidationClasses() : "border-border"}`}
+                      id="maps-url"
+                      placeholder="Paste Google Maps share link (e.g., https://maps.app.goo.gl/...)"
+                      value={qrData.location.mapsUrl}
+                      onChange={(e) => handleMapsUrlChange(e.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {qrData.location.mapsUrl && isShortenedMapsUrl(qrData.location.mapsUrl) 
+                        ? "Shortened link detected - will be used directly"
+                        : "Paste any Google Maps link"}
+                    </p>
+                  </div>
+                  
+                  <div className="relative">
+                    <div className="absolute inset-0 flex items-center">
+                      <span className="w-full border-t border-border" />
                     </div>
-                    <div>
-                      <Label className="text-foreground font-medium" htmlFor="longitude">
-                        Longitude
-                      </Label>
-                      <Input
-                        className="bg-input border-border text-foreground placeholder:text-muted-foreground focus:border-secondary focus:ring-secondary/20"
-                        id="longitude"
-                        placeholder="-74.0060"
-                        value={qrData.location.longitude}
-                        onChange={(e) => {
-                          updateNestedQRData("location", "longitude", e.target.value)
-                          updateNestedQRData("location", "useDirectLink", false)
-                        }}
-                      />
+                    <div className="relative flex justify-center text-xs uppercase">
+                      <span className="bg-card px-2 text-muted-foreground">or</span>
+                    </div>
+                  </div>
+
+                  {/* Coordinates */}
+                  <div className={`p-3 rounded-lg border transition-all duration-300 ${qrData.location.inputType === "coordinates" && (qrData.location.latitude || qrData.location.longitude) ? "border-secondary bg-secondary/5" : "border-transparent"}`}>
+                    <Label className="text-foreground font-medium">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Globe className="h-4 w-4" />
+                        Coordinates
+                        {qrData.location.inputType === "coordinates" && qrData.location.latitude && qrData.location.longitude && (
+                          <span className="text-xs bg-secondary/20 text-secondary px-2 py-0.5 rounded-full">Active</span>
+                        )}
+                      </div>
+                    </Label>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <Label className="text-foreground text-xs" htmlFor="latitude">
+                          Latitude
+                        </Label>
+                        <Input
+                          className={`bg-input text-foreground placeholder:text-muted-foreground transition-all duration-300 ${qrData.location.inputType === "coordinates" && qrData.location.latitude ? getValidationClasses() : "border-border"}`}
+                          id="latitude"
+                          placeholder="40.7128"
+                          value={qrData.location.latitude}
+                          onChange={(e) => handleCoordinateChange("latitude", e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-foreground text-xs" htmlFor="longitude">
+                          Longitude
+                        </Label>
+                        <Input
+                          className={`bg-input text-foreground placeholder:text-muted-foreground transition-all duration-300 ${qrData.location.inputType === "coordinates" && qrData.location.longitude ? getValidationClasses() : "border-border"}`}
+                          id="longitude"
+                          placeholder="-74.0060"
+                          value={qrData.location.longitude}
+                          onChange={(e) => handleCoordinateChange("longitude", e.target.value)}
+                        />
+                      </div>
                     </div>
                   </div>
                   
+                  {/* Active Selection Summary */}
                   {hasValidContent() && (
-                    <div className="p-3 bg-muted/50 border border-border rounded-md">
-                      <p className="text-xs text-muted-foreground">
-                        <span className="font-medium text-foreground">QR Code will contain:</span>{" "}
-                        {qrData.location.useDirectLink && qrData.location.mapsUrl
-                          ? "Direct Google Maps link (works on all devices)"
-                          : "Universal coordinates link (works on iOS & Android)"}
+                    <div className="p-3 bg-gradient-to-r from-emerald-500/10 to-cyan-500/10 border border-secondary/30 rounded-lg">
+                      <p className="text-sm text-foreground">
+                        <span className="font-medium">Using:</span>{" "}
+                        {qrData.location.inputType === "address" && qrData.location.address
+                          ? `Address search: "${qrData.location.address.split('\n')[0]}..."`
+                          : qrData.location.inputType === "link" && qrData.location.mapsUrl
+                          ? "Direct Google Maps link"
+                          : `Coordinates: ${qrData.location.latitude}, ${qrData.location.longitude}`}
                       </p>
                     </div>
                   )}

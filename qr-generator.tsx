@@ -148,14 +148,6 @@ export default function QRGenerator() {
     return url.includes("goo.gl") || url.includes("maps.app.goo.gl")
   }
 
-  // Check if input looks like a Google Maps URL
-  const isGoogleMapsUrl = (input: string): boolean => {
-    return input.includes("google.com/maps") || 
-           input.includes("maps.google.com") || 
-           input.includes("goo.gl") || 
-           input.includes("maps.app.goo.gl")
-  }
-
   // Handle Maps URL input and extract coordinates if possible
   const handleMapsUrlChange = (url: string) => {
     // Try to parse coordinates from the URL
@@ -290,61 +282,18 @@ export default function QRGenerator() {
     }
   }
 
-  // Validate input based on type
-  const validateInput = useCallback(() => {
-    if (!hasValidContent()) {
-      setValidationState("idle")
-      return
-    }
-    
-    switch (activeTab) {
-      case "url":
-        // Simple URL validation - avoid complex regex that can freeze
-        const url = qrData.url.trim()
-        const hasValidDomain = url.includes(".") && url.length > 3
-        const noSpaces = !url.includes(" ")
-        setValidationState(hasValidDomain && noSpaces ? "valid" : "invalid")
-        break
-      case "phone":
-        // Simple phone validation
-        const phone = qrData.phone.replace(/[\s\-\(\)\.]/g, "")
-        const isValidPhone = /^\+?[0-9]{6,15}$/.test(phone)
-        setValidationState(isValidPhone ? "valid" : "invalid")
-        break
-      case "location":
-        const { inputType: locType, mapsUrl: locUrl, latitude: locLat, longitude: locLng, address: locAddr } = qrData.location
-        if (locType === "link") {
-          setValidationState(locUrl.includes("google") || locUrl.includes("goo.gl") ? "valid" : "invalid")
-        } else if (locType === "coordinates") {
-          const lat = parseFloat(locLat)
-          const lng = parseFloat(locLng)
-          setValidationState(lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180 ? "valid" : "invalid")
-        } else if (locType === "address") {
-          // Address is valid if it has some content (at least 5 chars for a basic address)
-          setValidationState(locAddr.trim().length >= 5 ? "valid" : "invalid")
-        }
-        break
-      default:
-        setValidationState("valid")
-    }
-  }, [activeTab, qrData])
-
-  useEffect(() => {
-    validateInput()
-  }, [validateInput])
-
   // Check if the current input is valid for QR generation
-  const isValidForGeneration = (): boolean => {
-    if (!hasValidContent()) return false
-    
+  const isValidForGeneration = useCallback((): boolean => {
     switch (activeTab) {
       case "url":
         const url = qrData.url.trim()
+        if (!url) return false
         const hasValidDomain = url.includes(".") && url.length > 3
         const noSpaces = !url.includes(" ")
         return hasValidDomain && noSpaces
       case "phone":
         const phone = qrData.phone.replace(/[\s\-\(\)\.]/g, "")
+        if (!phone) return false
         return /^\+?[0-9]{6,15}$/.test(phone)
       case "text":
         return qrData.text.trim().length > 0
@@ -355,13 +304,26 @@ export default function QRGenerator() {
         if (inputType === "coordinates") {
           const lat = parseFloat(latitude)
           const lng = parseFloat(longitude)
-          return lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180
+          return !isNaN(lat) && !isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180
         }
         return false
       default:
         return true
     }
-  }
+  }, [activeTab, qrData])
+
+  // Validate input based on type - uses isValidForGeneration to avoid duplication
+  const validateInput = useCallback(() => {
+    if (!hasValidContent()) {
+      setValidationState("idle")
+      return
+    }
+    setValidationState(isValidForGeneration() ? "valid" : "invalid")
+  }, [hasValidContent, isValidForGeneration])
+
+  useEffect(() => {
+    validateInput()
+  }, [validateInput])
 
   const generateQRCode = async () => {
     const qrString = generateQRString()
@@ -489,6 +451,23 @@ export default function QRGenerator() {
     } else if (item.type === "phone") {
       const phone = item.data.replace("tel:", "")
       setQRData(prev => ({ ...prev, phone }))
+    } else if (item.type === "location") {
+      // Handle location history - detect if it's an address search or direct link
+      if (item.data.includes("/search/")) {
+        // Address search URL - extract the query
+        const match = item.data.match(/query=([^&]+)/)
+        const address = match ? decodeURIComponent(match[1]).replace(/, /g, "\n") : item.data
+        setQRData(prev => ({ ...prev, location: { ...prev.location, address, mapsUrl: "", latitude: "", longitude: "", inputType: "address" } }))
+      } else if (item.data.includes("?q=")) {
+        // Coordinates URL - extract lat/lng
+        const match = item.data.match(/q=([^,]+),([^&]+)/)
+        if (match) {
+          setQRData(prev => ({ ...prev, location: { ...prev.location, latitude: match[1], longitude: match[2], mapsUrl: "", address: "", inputType: "coordinates" } }))
+        }
+      } else {
+        // Direct link
+        setQRData(prev => ({ ...prev, location: { ...prev.location, mapsUrl: item.data, latitude: "", longitude: "", address: "", inputType: "link" } }))
+      }
     }
     setShowHistory(false)
   }
@@ -497,27 +476,11 @@ export default function QRGenerator() {
     generateQRCode()
   }, [qrData, activeTab, errorLevel, size, qrColors])
 
-  const updateQRData = (field: string, value: any) => {
+  const updateQRData = (field: keyof QRData, value: string) => {
     setQRData((prev) => ({
       ...prev,
       [field]: value,
     }))
-  }
-
-  const updateNestedQRData = (parent: keyof QRData, field: string, value: string | boolean) => {
-    setQRData((prev) => {
-      const parentValue = prev[parent]
-      if (typeof parentValue === "object" && parentValue !== null) {
-        return {
-          ...prev,
-          [parent]: {
-            ...parentValue,
-            [field]: value,
-          },
-        }
-      }
-      return prev
-    })
   }
 
   const getValidationClasses = () => {
@@ -924,6 +887,7 @@ export default function QRGenerator() {
                       <div className="flex gap-2 mt-1 flex-wrap">
                         {colorPresets.foreground.map((color) => (
                           <button
+                            type="button"
                             key={color.value}
                             onClick={() => setQrColors(prev => ({ ...prev, foreground: color.value }))}
                             className={`w-7 h-7 rounded-full border-2 transition-all duration-200 hover:scale-110 ${
@@ -931,6 +895,7 @@ export default function QRGenerator() {
                             }`}
                             style={{ backgroundColor: color.value }}
                             title={color.label}
+                            aria-label={`Select ${color.label} foreground color`}
                           />
                         ))}
                       </div>
@@ -940,6 +905,7 @@ export default function QRGenerator() {
                       <div className="flex gap-2 mt-1 flex-wrap">
                         {colorPresets.background.map((color) => (
                           <button
+                            type="button"
                             key={color.value}
                             onClick={() => setQrColors(prev => ({ ...prev, background: color.value }))}
                             className={`w-7 h-7 rounded-full border-2 transition-all duration-200 hover:scale-110 ${
@@ -947,6 +913,7 @@ export default function QRGenerator() {
                             }`}
                             style={{ backgroundColor: color.value }}
                             title={color.label}
+                            aria-label={`Select ${color.label} background color`}
                           />
                         ))}
                       </div>

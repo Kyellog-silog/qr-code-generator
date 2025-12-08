@@ -4,7 +4,7 @@ A modern, responsive QR code generator built with Next.js 15 and React 19. Gener
 
 ## Live Demo
 
-Visit the deployed application at: [Your Vercel URL]
+Visit the deployed application at: https://qr-code-generator-roan-five.vercel.app
 
 ## Features
 

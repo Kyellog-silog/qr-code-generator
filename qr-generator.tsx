@@ -333,9 +333,41 @@ export default function QRGenerator() {
     validateInput()
   }, [validateInput])
 
+  // Check if the current input is valid for QR generation
+  const isValidForGeneration = (): boolean => {
+    if (!hasValidContent()) return false
+    
+    switch (activeTab) {
+      case "url":
+        const url = qrData.url.trim()
+        const hasValidDomain = url.includes(".") && url.length > 3
+        const noSpaces = !url.includes(" ")
+        return hasValidDomain && noSpaces
+      case "phone":
+        const phone = qrData.phone.replace(/[\s\-\(\)\.]/g, "")
+        return /^\+?[0-9]{6,15}$/.test(phone)
+      case "text":
+        return qrData.text.trim().length > 0
+      case "location":
+        const { inputType, mapsUrl, latitude, longitude, address } = qrData.location
+        if (inputType === "address") return address.trim().length >= 5
+        if (inputType === "link") return mapsUrl.includes("google") || mapsUrl.includes("goo.gl")
+        if (inputType === "coordinates") {
+          const lat = parseFloat(latitude)
+          const lng = parseFloat(longitude)
+          return lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180
+        }
+        return false
+      default:
+        return true
+    }
+  }
+
   const generateQRCode = async () => {
     const qrString = generateQRString()
-    if (!qrString.trim()) {
+    
+    // Don't generate if empty or invalid format
+    if (!qrString.trim() || !isValidForGeneration()) {
       setQrCodeUrl("")
       return
     }
@@ -516,9 +548,6 @@ export default function QRGenerator() {
           <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold mb-4 text-balance bg-gradient-to-r from-emerald-400 via-cyan-400 to-blue-500 bg-clip-text text-transparent animate-gradient">
             QR Code Generator
           </h1>
-          <p className="text-muted-foreground text-lg leading-[150%] tracking-[-0.1px]">
-            Create stunning QR codes for different types of content
-          </p>
         </div>
 
         {/* History Toggle Button */}
@@ -956,10 +985,23 @@ export default function QRGenerator() {
                 ) : (
                   /* Empty State Placeholder */
                   <div className="w-48 h-48 flex flex-col items-center justify-center text-center">
-                    <div className="w-32 h-32 border-4 border-dashed border-gray-300 rounded-lg flex items-center justify-center mb-3">
-                      <QrCode className="h-12 w-12 text-gray-300" />
-                    </div>
-                    <p className="text-sm text-gray-400">Your QR code will appear here</p>
+                    {validationState === "invalid" && (activeTab === "url" || activeTab === "phone") ? (
+                      <>
+                        <div className="w-32 h-32 border-4 border-dashed border-red-300 dark:border-red-400/50 rounded-lg flex items-center justify-center mb-3">
+                          <QrCode className="h-12 w-12 text-red-300 dark:text-red-400/50" />
+                        </div>
+                        <p className="text-sm text-red-500 dark:text-red-400">
+                          {activeTab === "url" ? "Enter a valid URL format" : "Enter a valid phone number"}
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <div className="w-32 h-32 border-4 border-dashed border-gray-300 rounded-lg flex items-center justify-center mb-3">
+                          <QrCode className="h-12 w-12 text-gray-300" />
+                        </div>
+                        <p className="text-sm text-gray-400">Your QR code will appear here</p>
+                      </>
+                    )}
                   </div>
                 )}
                 

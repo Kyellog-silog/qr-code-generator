@@ -376,14 +376,39 @@ export default function QRGenerator() {
     }
   }
 
-  const copyToClipboard = async () => {
-    const qrString = generateQRString()
-    if (qrString) {
-      await navigator.clipboard.writeText(qrString)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-      // Save to history on copy
-      addToHistory()
+  const copyImageToClipboard = async () => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    try {
+      // Convert canvas to blob
+      const blob = await new Promise<Blob | null>((resolve) => {
+        canvas.toBlob(resolve, "image/png")
+      })
+      
+      if (blob) {
+        // Use the Clipboard API to copy the image
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            "image/png": blob,
+          }),
+        ])
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+        // Save to history on copy
+        addToHistory()
+      }
+    } catch (error) {
+      // Fallback: copy the data URL as text if image copy fails
+      console.error("Failed to copy image, falling back to data URL:", error)
+      try {
+        await navigator.clipboard.writeText(qrCodeUrl)
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+        addToHistory()
+      } catch {
+        console.error("Failed to copy to clipboard")
+      }
     }
   }
 
@@ -959,18 +984,18 @@ export default function QRGenerator() {
                   
                   <Button
                     variant="outline"
-                    onClick={copyToClipboard}
+                    onClick={copyImageToClipboard}
                     className="w-full border-border hover:bg-muted transition-all duration-300"
                   >
                     {copied ? (
                       <>
                         <Check className="mr-2 h-4 w-4 text-green-500" />
-                        Copied to Clipboard!
+                        Image Copied!
                       </>
                     ) : (
                       <>
                         <Copy className="mr-2 h-4 w-4" />
-                        Copy Data
+                        Copy Image
                       </>
                     )}
                   </Button>

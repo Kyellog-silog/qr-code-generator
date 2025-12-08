@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react"
 import QRCode from "qrcode"
+import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -9,7 +10,8 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Download, Smartphone, Phone, MessageSquare, MapPin, Globe, Link, Copy, Check, History, Trash2, QrCode } from "lucide-react"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Download, Smartphone, Phone, MessageSquare, MapPin, Globe, Link as LinkIcon, Copy, Check, History, Trash2, QrCode, Settings, Save, RefreshCw, ExternalLink, Loader2 } from "lucide-react"
 import { ThemeToggle } from "@/components/theme-toggle"
 
 interface QRData {
@@ -76,6 +78,20 @@ export default function QRGenerator() {
   const [showHistory, setShowHistory] = useState(false)
   const [validationState, setValidationState] = useState<"idle" | "valid" | "invalid">("idle")
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  
+  // Managed Link Dialog state
+  const [showSaveDialog, setShowSaveDialog] = useState(false)
+  const [managedSlug, setManagedSlug] = useState("")
+  const [savingLink, setSavingLink] = useState(false)
+  const [saveError, setSaveError] = useState("")
+  const [savedLinkSlug, setSavedLinkSlug] = useState<string | null>(null)
+  
+  // Active managed link - when set, QR shows the redirect URL instead of destination
+  const [activeManagedLink, setActiveManagedLink] = useState<{
+    slug: string
+    destination: string
+    redirectUrl: string
+  } | null>(null)
 
   // Load history from localStorage on mount
   useEffect(() => {
@@ -226,6 +242,11 @@ export default function QRGenerator() {
   }
 
   const generateQRString = () => {
+    // If we have an active managed link, use its redirect URL
+    if (activeManagedLink) {
+      return activeManagedLink.redirectUrl
+    }
+    
     switch (activeTab) {
       case "text":
         return qrData.text
@@ -440,6 +461,139 @@ export default function QRGenerator() {
     localStorage.removeItem("qr-history")
   }
 
+  // Generate a random slug for managed links
+  const generateRandomSlug = () => {
+    const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+    let result = ""
+    for (let i = 0; i < 6; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length))
+    }
+    return result
+  }
+
+  // Create a dynamic/managed link - creates slug immediately, QR shows redirect URL
+  const createDynamicLink = async () => {
+    // Get the current destination
+    const destination = activeManagedLink ? activeManagedLink.destination : generateQRString()
+    if (!destination) {
+      setSaveError("Enter valid content first")
+      return
+    }
+
+    // Generate a random slug
+    const slug = generateRandomSlug()
+    
+    setSavingLink(true)
+    setSaveError("")
+
+    try {
+      const res = await fetch("/api/links", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          slug: slug, 
+          destination: destination,
+          status: "active" // Create as active immediately
+        }),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        setSaveError(data.error || "Failed to create link")
+        return
+      }
+
+      // Use the redirect URL from the API response, or build it
+      const redirectUrl = data.redirectUrl || `${window.location.origin}/r/${slug}`
+
+      // Set the active managed link - this will make the QR show the redirect URL
+      setActiveManagedLink({
+        slug: slug,
+        destination: destination,
+        redirectUrl: redirectUrl,
+      })
+
+      setSavedLinkSlug(slug)
+      setShowSaveDialog(false)
+    } catch (err) {
+      setSaveError("Failed to create link. Make sure the server is running.")
+    } finally {
+      setSavingLink(false)
+    }
+  }
+
+  // Discard the current dynamic link and switch back to direct mode
+  const discardDynamicLink = async () => {
+    if (!activeManagedLink) return
+
+    try {
+      // Delete the draft link from the backend
+      await fetch(`/api/links?slug=${activeManagedLink.slug}`, {
+        method: "DELETE",
+      })
+    } catch (err) {
+      console.error("Failed to delete draft link:", err)
+    }
+
+    // Clear the managed link state
+    setActiveManagedLink(null)
+    setSavedLinkSlug(null)
+  }
+
+  // Open save dialog with auto-generated slug (for custom slug option)
+  const openSaveDialog = () => {
+    setManagedSlug(generateRandomSlug())
+    setSaveError("")
+    setShowSaveDialog(true)
+  }
+
+  // Save with custom slug from dialog
+  const saveWithCustomSlug = async () => {
+    const destination = generateQRString()
+    if (!destination || !managedSlug.trim()) {
+      setSaveError("Enter valid content and a slug")
+      return
+    }
+
+    setSavingLink(true)
+    setSaveError("")
+
+    try {
+      const res = await fetch("/api/links", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          slug: managedSlug.trim(), 
+          destination: destination,
+          status: "active"
+        }),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        setSaveError(data.error || "Failed to create link")
+        return
+      }
+
+      const redirectUrl = data.redirectUrl || `${window.location.origin}/r/${managedSlug.trim()}`
+
+      setActiveManagedLink({
+        slug: managedSlug.trim(),
+        destination: destination,
+        redirectUrl: redirectUrl,
+      })
+
+      setSavedLinkSlug(managedSlug.trim())
+      setShowSaveDialog(false)
+    } catch (err) {
+      setSaveError("Failed to create link. Make sure the server is running.")
+    } finally {
+      setSavingLink(false)
+    }
+  }
+
   const loadFromHistory = (item: QRHistoryItem) => {
     setActiveTab(item.type)
     // Restore the data based on type
@@ -474,9 +628,14 @@ export default function QRGenerator() {
 
   useEffect(() => {
     generateQRCode()
-  }, [qrData, activeTab, errorLevel, size, qrColors])
+  }, [qrData, activeTab, errorLevel, size, qrColors, activeManagedLink])
 
   const updateQRData = (field: keyof QRData, value: string) => {
+    // Clear managed link when user modifies data
+    if (activeManagedLink) {
+      setActiveManagedLink(null)
+      setSavedLinkSlug(null)
+    }
     setQRData((prev) => ({
       ...prev,
       [field]: value,
@@ -511,6 +670,12 @@ export default function QRGenerator() {
           <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold mb-4 text-balance bg-gradient-to-r from-emerald-400 via-cyan-400 to-blue-500 bg-clip-text text-transparent animate-gradient">
             QR Code Generator
           </h1>
+          <Link href="/admin">
+            <Button variant="outline" size="sm" className="border-border hover:bg-muted">
+              <Settings className="h-4 w-4 mr-2" />
+              Link Manager
+            </Button>
+          </Link>
         </div>
 
         {/* History Toggle Button */}
@@ -755,7 +920,7 @@ export default function QRGenerator() {
                   <div className={`p-3 rounded-lg border transition-all duration-300 ${(qrData.location.inputType === "link" || qrData.location.inputType === "coordinates") && qrData.location.mapsUrl ? "border-secondary bg-secondary/5" : "border-transparent"}`}>
                     <Label className="text-foreground font-medium" htmlFor="maps-url">
                       <div className="flex items-center gap-2">
-                        <Link className="h-4 w-4" />
+                        <LinkIcon className="h-4 w-4" />
                         Google Maps Link
                         {qrData.location.inputType === "link" && qrData.location.mapsUrl && (
                           <span className="text-xs bg-secondary/20 text-secondary px-2 py-0.5 rounded-full">Active</span>
@@ -1008,6 +1173,72 @@ export default function QRGenerator() {
                       </>
                     )}
                   </Button>
+
+                  {/* Dynamic Link Mode - Create or Show Active */}
+                  {activeManagedLink ? (
+                    <div className="p-4 bg-gradient-to-r from-emerald-500/10 to-cyan-500/10 border border-secondary/30 rounded-lg space-y-3">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <p className="text-sm font-medium text-foreground flex items-center gap-2">
+                            <LinkIcon className="h-4 w-4 text-secondary" />
+                            Dynamic QR Active
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            This QR encodes the redirect URL — destination can be changed anytime!
+                          </p>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={discardDynamicLink}
+                          className="text-xs h-7 text-destructive hover:text-destructive"
+                        >
+                          <Trash2 className="h-3 w-3 mr-1" />
+                          Discard
+                        </Button>
+                      </div>
+                      
+                      <div className="space-y-2 text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="text-muted-foreground w-24 shrink-0">QR encodes:</span>
+                          <code className="bg-muted px-2 py-1 rounded truncate text-secondary font-medium">{activeManagedLink.redirectUrl}</code>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-muted-foreground w-24 shrink-0">Redirects to:</span>
+                          <span className="truncate text-muted-foreground">{activeManagedLink.destination}</span>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-2 pt-1 border-t border-border/50">
+                        <a
+                          href="/admin"
+                          className="text-xs text-secondary hover:underline flex items-center gap-1 pt-2"
+                        >
+                          <Settings className="h-3 w-3" />
+                          Change destination in Link Manager
+                        </a>
+                      </div>
+                    </div>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      onClick={createDynamicLink}
+                      disabled={savingLink || !hasValidContent()}
+                      className="w-full border-border hover:bg-muted transition-all duration-300"
+                    >
+                      {savingLink ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Creating...
+                        </>
+                      ) : (
+                        <>
+                          <LinkIcon className="mr-2 h-4 w-4" />
+                          Create Dynamic QR
+                        </>
+                      )}
+                    </Button>
+                  )}
                 </div>
               )}
 
@@ -1024,6 +1255,85 @@ export default function QRGenerator() {
           </Card>
         </div>
       </div>
+
+      {/* Save as Managed Link Dialog */}
+      <Dialog open={showSaveDialog} onOpenChange={setShowSaveDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Save className="h-5 w-5 text-secondary" />
+              Save as Managed Link
+            </DialogTitle>
+            <DialogDescription>
+              Create a permanent short URL for this QR code. You can change where it redirects anytime without changing the QR code.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            <div>
+              <Label htmlFor="managed-slug">Short URL Slug</Label>
+              <div className="flex gap-2 mt-1">
+                <div className="flex-1 relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">/r/</span>
+                  <Input
+                    id="managed-slug"
+                    placeholder="my-link"
+                    value={managedSlug}
+                    onChange={(e) => setManagedSlug(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))}
+                    className="pl-9"
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={() => setManagedSlug(generateRandomSlug())}
+                  title="Generate random slug"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                This will be your permanent URL: <code className="bg-muted px-1 rounded">/r/{managedSlug || "..."}</code>
+              </p>
+            </div>
+
+            <div>
+              <Label>Destination</Label>
+              <div className="mt-1 p-2 bg-muted/50 border border-border rounded-md text-sm font-mono break-all max-h-20 overflow-y-auto">
+                {generateQRString()}
+              </div>
+            </div>
+
+            {saveError && (
+              <p className="text-sm text-red-500">{saveError}</p>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowSaveDialog(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={saveWithCustomSlug}
+              disabled={savingLink || !managedSlug.trim()}
+              className="bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-600 hover:to-cyan-600 text-white"
+            >
+              {savingLink ? (
+                <>
+                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="mr-2 h-4 w-4" />
+                  Save Link
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import QRCode from "qrcode"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Download, Smartphone, Phone, MessageSquare, MapPin, Globe, Link } from "lucide-react"
+import { Download, Smartphone, Phone, MessageSquare, MapPin, Globe, Link, Copy, Check, History, Trash2, QrCode } from "lucide-react"
 import { ThemeToggle } from "@/components/theme-toggle"
 
 interface QRData {
@@ -24,6 +24,39 @@ interface QRData {
   }
 }
 
+interface QRHistoryItem {
+  id: string
+  type: string
+  data: string
+  timestamp: number
+  qrCodeUrl: string
+}
+
+interface QRColors {
+  foreground: string
+  background: string
+}
+
+// Predefined color options
+const colorPresets = {
+  foreground: [
+    { label: "Black", value: "#000000" },
+    { label: "Navy", value: "#1e3a5f" },
+    { label: "Forest", value: "#1a4d2e" },
+    { label: "Maroon", value: "#6b1c1c" },
+    { label: "Purple", value: "#4a1a6b" },
+    { label: "Slate", value: "#0f172a" },
+  ],
+  background: [
+    { label: "White", value: "#ffffff" },
+    { label: "Cream", value: "#fefce8" },
+    { label: "Mint", value: "#f0fdf4" },
+    { label: "Lavender", value: "#faf5ff" },
+    { label: "Sky", value: "#f0f9ff" },
+    { label: "Rose", value: "#fff1f2" },
+  ],
+}
+
 export default function QRGenerator() {
   const [activeTab, setActiveTab] = useState("text")
   const [qrData, setQRData] = useState<QRData>({
@@ -35,7 +68,25 @@ export default function QRGenerator() {
   const [qrCodeUrl, setQrCodeUrl] = useState("")
   const [errorLevel, setErrorLevel] = useState<"L" | "M" | "Q" | "H">("M")
   const [size, setSize] = useState(256)
+  const [copied, setCopied] = useState(false)
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [qrColors, setQrColors] = useState<QRColors>({ foreground: "#000000", background: "#ffffff" })
+  const [history, setHistory] = useState<QRHistoryItem[]>([])
+  const [showHistory, setShowHistory] = useState(false)
+  const [validationState, setValidationState] = useState<"idle" | "valid" | "invalid">("idle")
   const canvasRef = useRef<HTMLCanvasElement>(null)
+
+  // Load history from localStorage on mount
+  useEffect(() => {
+    const savedHistory = localStorage.getItem("qr-history")
+    if (savedHistory) {
+      try {
+        setHistory(JSON.parse(savedHistory))
+      } catch {
+        // Invalid JSON, ignore
+      }
+    }
+  }, [])
 
   // Parse coordinates from various Google Maps URL formats
   const parseCoordinatesFromUrl = (url: string): { lat: string; lng: string } | null => {
@@ -158,10 +209,49 @@ export default function QRGenerator() {
     }
   }
 
+  // Validate input based on type
+  const validateInput = useCallback(() => {
+    if (!hasValidContent()) {
+      setValidationState("idle")
+      return
+    }
+    
+    switch (activeTab) {
+      case "url":
+        const urlPattern = /^(https?:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w \.-]*)*\/?$/i
+        setValidationState(urlPattern.test(qrData.url) ? "valid" : "invalid")
+        break
+      case "phone":
+        const phonePattern = /^[\+]?[(]?[0-9]{1,4}[)]?[-\s\.]?[0-9]{1,4}[-\s\.]?[0-9]{1,9}$/
+        setValidationState(phonePattern.test(qrData.phone) ? "valid" : "invalid")
+        break
+      case "location":
+        if (qrData.location.useDirectLink) {
+          setValidationState(qrData.location.mapsUrl.includes("google") || qrData.location.mapsUrl.includes("goo.gl") ? "valid" : "invalid")
+        } else {
+          const lat = parseFloat(qrData.location.latitude)
+          const lng = parseFloat(qrData.location.longitude)
+          setValidationState(lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180 ? "valid" : "invalid")
+        }
+        break
+      default:
+        setValidationState("valid")
+    }
+  }, [activeTab, qrData])
+
+  useEffect(() => {
+    validateInput()
+  }, [validateInput])
+
   const generateQRCode = async () => {
     const qrString = generateQRString()
-    if (!qrString.trim()) return
+    if (!qrString.trim()) {
+      setQrCodeUrl("")
+      return
+    }
 
+    setIsGenerating(true)
+    
     try {
       const canvas = canvasRef.current
       if (canvas) {
@@ -170,8 +260,8 @@ export default function QRGenerator() {
           width: size,
           margin: 2,
           color: {
-            dark: "#0f172a", // slate-900
-            light: "#ffffff",
+            dark: qrColors.foreground,
+            light: qrColors.background,
           },
         })
 
@@ -180,6 +270,8 @@ export default function QRGenerator() {
       }
     } catch (error) {
       console.error("Error generating QR code:", error)
+    } finally {
+      setTimeout(() => setIsGenerating(false), 300)
     }
   }
 
@@ -192,9 +284,69 @@ export default function QRGenerator() {
     }
   }
 
+  const copyToClipboard = async () => {
+    const qrString = generateQRString()
+    if (qrString) {
+      await navigator.clipboard.writeText(qrString)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
+  }
+
+  const addToHistory = () => {
+    const qrString = generateQRString()
+    if (!qrString || !qrCodeUrl) return
+
+    const newItem: QRHistoryItem = {
+      id: Date.now().toString(),
+      type: activeTab,
+      data: qrString,
+      timestamp: Date.now(),
+      qrCodeUrl: qrCodeUrl,
+    }
+
+    const updatedHistory = [newItem, ...history].slice(0, 10) // Keep last 10
+    setHistory(updatedHistory)
+    localStorage.setItem("qr-history", JSON.stringify(updatedHistory))
+  }
+
+  const removeFromHistory = (id: string) => {
+    const updatedHistory = history.filter(item => item.id !== id)
+    setHistory(updatedHistory)
+    localStorage.setItem("qr-history", JSON.stringify(updatedHistory))
+  }
+
+  const clearHistory = () => {
+    setHistory([])
+    localStorage.removeItem("qr-history")
+  }
+
+  const loadFromHistory = (item: QRHistoryItem) => {
+    setActiveTab(item.type)
+    // Restore the data based on type
+    if (item.type === "text") {
+      setQRData(prev => ({ ...prev, text: item.data }))
+    } else if (item.type === "url") {
+      const url = item.data.replace(/^https?:\/\//, "")
+      setQRData(prev => ({ ...prev, url }))
+    } else if (item.type === "phone") {
+      const phone = item.data.replace("tel:", "")
+      setQRData(prev => ({ ...prev, phone }))
+    }
+    setShowHistory(false)
+  }
+
   useEffect(() => {
     generateQRCode()
-  }, [qrData, activeTab, errorLevel, size])
+  }, [qrData, activeTab, errorLevel, size, qrColors])
+
+  // Auto-save to history when QR code is generated
+  useEffect(() => {
+    if (qrCodeUrl && hasValidContent()) {
+      const timeoutId = setTimeout(addToHistory, 1000) // Debounce
+      return () => clearTimeout(timeoutId)
+    }
+  }, [qrCodeUrl])
 
   const updateQRData = (field: string, value: any) => {
     setQRData((prev) => ({
@@ -213,8 +365,24 @@ export default function QRGenerator() {
     }))
   }
 
+  const getValidationClasses = () => {
+    if (validationState === "valid") return "border-green-500 focus:border-green-500 focus:ring-green-500/20"
+    if (validationState === "invalid") return "border-red-500 focus:border-red-500 focus:ring-red-500/20"
+    return "border-border focus:border-secondary focus:ring-secondary/20"
+  }
+
+  const getTypeIcon = (type: string) => {
+    switch (type) {
+      case "text": return <MessageSquare className="h-3 w-3" />
+      case "url": return <Globe className="h-3 w-3" />
+      case "phone": return <Phone className="h-3 w-3" />
+      case "location": return <MapPin className="h-3 w-3" />
+      default: return <QrCode className="h-3 w-3" />
+    }
+  }
+
   return (
-    <div className="min-h-screen bg-background p-4 transition-colors duration-300">
+    <div className="min-h-screen bg-background p-4 transition-colors duration-500">
       {/* Theme Toggle - Fixed Position */}
       <div className="fixed top-4 right-4 z-50">
         <ThemeToggle />
@@ -222,15 +390,90 @@ export default function QRGenerator() {
 
       <div className="max-w-6xl mx-auto">
         <div className="text-center mb-8">
-          <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-foreground mb-4 text-balance">QR Code Generator</h1>
+          <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold mb-4 text-balance bg-gradient-to-r from-emerald-400 via-cyan-400 to-blue-500 bg-clip-text text-transparent animate-gradient">
+            QR Code Generator
+          </h1>
           <p className="text-muted-foreground text-lg leading-[150%] tracking-[-0.1px]">
             Create stunning QR codes for different types of content
           </p>
         </div>
 
-        <div className={`grid gap-8 ${hasValidContent() ? "lg:grid-cols-2" : "lg:grid-cols-1 max-w-2xl mx-auto"}`}>
+        {/* History Toggle Button */}
+        {history.length > 0 && (
+          <div className="flex justify-center mb-6">
+            <Button
+              variant="outline"
+              onClick={() => setShowHistory(!showHistory)}
+              className="border-border hover:bg-muted transition-all duration-300"
+            >
+              <History className="h-4 w-4 mr-2" />
+              {showHistory ? "Hide History" : `Recent QR Codes (${history.length})`}
+            </Button>
+          </div>
+        )}
+
+        {/* History Section */}
+        {showHistory && history.length > 0 && (
+          <Card className="mb-8 bg-card/50 backdrop-blur-sm border-border shadow-xl animate-in fade-in slide-in-from-top-4 duration-300">
+            <CardHeader className="border-b border-border flex flex-row items-center justify-between">
+              <div>
+                <CardTitle className="text-foreground flex items-center gap-2">
+                  <History className="h-5 w-5 text-secondary" />
+                  Recent QR Codes
+                </CardTitle>
+                <CardDescription className="text-muted-foreground">
+                  Click to restore or delete
+                </CardDescription>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={clearHistory}
+                className="text-destructive hover:text-destructive hover:bg-destructive/10"
+              >
+                <Trash2 className="h-4 w-4 mr-1" />
+                Clear All
+              </Button>
+            </CardHeader>
+            <CardContent className="pt-4">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+                {history.map((item) => (
+                  <div
+                    key={item.id}
+                    className="group relative bg-muted/50 border border-border rounded-lg p-3 cursor-pointer hover:bg-muted hover:shadow-lg transition-all duration-300 hover:scale-105"
+                    onClick={() => loadFromHistory(item)}
+                  >
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-secondary">{getTypeIcon(item.type)}</span>
+                      <span className="text-xs uppercase text-muted-foreground font-medium">{item.type}</span>
+                    </div>
+                    <img
+                      src={item.qrCodeUrl}
+                      alt="QR Code"
+                      className="w-full aspect-square rounded bg-white"
+                    />
+                    <p className="text-xs text-muted-foreground mt-2 truncate">{item.data}</p>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity h-6 w-6"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        removeFromHistory(item.id)
+                      }}
+                    >
+                      <Trash2 className="h-3 w-3 text-destructive" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        <div className="grid gap-8 lg:grid-cols-2">
           {/* Input Section */}
-          <Card className="bg-card border-border shadow-2xl">
+          <Card className="bg-card/80 backdrop-blur-sm border-border shadow-2xl shadow-black/10 dark:shadow-black/30 hover:shadow-3xl transition-shadow duration-500">
             <CardHeader className="border-b border-border">
               <CardTitle className="flex items-center gap-2 text-foreground">
                 <Smartphone className="h-5 w-5 text-secondary" />
@@ -245,77 +488,98 @@ export default function QRGenerator() {
                 <TabsList className="grid grid-cols-4 mb-6 bg-muted border border-border p-1">
                   <TabsTrigger
                     value="text"
-                    className="data-[state=active]:bg-foreground data-[state=active]:text-background text-muted-foreground hover:text-foreground transition-all duration-200"
+                    className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-emerald-500 data-[state=active]:to-cyan-500 data-[state=active]:text-white text-muted-foreground hover:text-foreground transition-all duration-300"
                   >
                     <MessageSquare className="h-4 w-4" />
                   </TabsTrigger>
                   <TabsTrigger
                     value="url"
-                    className="data-[state=active]:bg-foreground data-[state=active]:text-background text-muted-foreground hover:text-foreground transition-all duration-200"
+                    className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-emerald-500 data-[state=active]:to-cyan-500 data-[state=active]:text-white text-muted-foreground hover:text-foreground transition-all duration-300"
                   >
                     <Globe className="h-4 w-4" />
                   </TabsTrigger>
                   <TabsTrigger
                     value="phone"
-                    className="data-[state=active]:bg-foreground data-[state=active]:text-background text-muted-foreground hover:text-foreground transition-all duration-200"
+                    className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-emerald-500 data-[state=active]:to-cyan-500 data-[state=active]:text-white text-muted-foreground hover:text-foreground transition-all duration-300"
                   >
                     <Phone className="h-4 w-4" />
                   </TabsTrigger>
                   <TabsTrigger
                     value="location"
-                    className="data-[state=active]:bg-foreground data-[state=active]:text-background text-muted-foreground hover:text-foreground transition-all duration-200"
+                    className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-emerald-500 data-[state=active]:to-cyan-500 data-[state=active]:text-white text-muted-foreground hover:text-foreground transition-all duration-300"
                   >
                     <MapPin className="h-4 w-4" />
                   </TabsTrigger>
                 </TabsList>
 
-                <TabsContent value="text" className="space-y-4">
+                <TabsContent value="text" className="space-y-4 animate-in fade-in-50 duration-300">
                   <div>
                     <Label className="text-foreground font-medium" htmlFor="text">
                       Text Content
                     </Label>
                     <Textarea
-                      className="bg-input border-border text-foreground placeholder:text-muted-foreground focus:border-secondary focus:ring-secondary/20"
+                      className={`bg-input text-foreground placeholder:text-muted-foreground transition-all duration-300 ${getValidationClasses()}`}
                       id="text"
                       placeholder="Enter your text here..."
                       value={qrData.text}
                       onChange={(e) => updateQRData("text", e.target.value)}
                       rows={4}
                     />
+                    {validationState === "valid" && hasValidContent() && (
+                      <p className="text-xs text-green-500 mt-1 flex items-center gap-1">
+                        <Check className="h-3 w-3" /> Valid text content
+                      </p>
+                    )}
                   </div>
                 </TabsContent>
 
-                <TabsContent value="url" className="space-y-4">
+                <TabsContent value="url" className="space-y-4 animate-in fade-in-50 duration-300">
                   <div>
                     <Label className="text-foreground font-medium" htmlFor="url">
                       Website URL
                     </Label>
                     <Input
-                      className="bg-input border-border text-foreground placeholder:text-muted-foreground focus:border-secondary focus:ring-secondary/20"
+                      className={`bg-input text-foreground placeholder:text-muted-foreground transition-all duration-300 ${getValidationClasses()}`}
                       id="url"
                       placeholder="example.com or https://example.com"
                       value={qrData.url}
                       onChange={(e) => updateQRData("url", e.target.value)}
                     />
+                    {validationState === "valid" && hasValidContent() && (
+                      <p className="text-xs text-green-500 mt-1 flex items-center gap-1">
+                        <Check className="h-3 w-3" /> Valid URL format
+                      </p>
+                    )}
+                    {validationState === "invalid" && hasValidContent() && (
+                      <p className="text-xs text-red-500 mt-1">Please enter a valid URL</p>
+                    )}
                   </div>
                 </TabsContent>
 
-                <TabsContent value="phone" className="space-y-4">
+                <TabsContent value="phone" className="space-y-4 animate-in fade-in-50 duration-300">
                   <div>
                     <Label className="text-foreground font-medium" htmlFor="phone">
                       Phone Number
                     </Label>
                     <Input
-                      className="bg-input border-border text-foreground placeholder:text-muted-foreground focus:border-secondary focus:ring-secondary/20"
+                      className={`bg-input text-foreground placeholder:text-muted-foreground transition-all duration-300 ${getValidationClasses()}`}
                       id="phone"
                       placeholder="+1234567890"
                       value={qrData.phone}
                       onChange={(e) => updateQRData("phone", e.target.value)}
                     />
+                    {validationState === "valid" && hasValidContent() && (
+                      <p className="text-xs text-green-500 mt-1 flex items-center gap-1">
+                        <Check className="h-3 w-3" /> Valid phone format
+                      </p>
+                    )}
+                    {validationState === "invalid" && hasValidContent() && (
+                      <p className="text-xs text-red-500 mt-1">Please enter a valid phone number</p>
+                    )}
                   </div>
                 </TabsContent>
 
-                <TabsContent value="location" className="space-y-4">
+                <TabsContent value="location" className="space-y-4 animate-in fade-in-50 duration-300">
                   <div>
                     <Label className="text-foreground font-medium" htmlFor="maps-url">
                       <div className="flex items-center gap-2">
@@ -324,7 +588,7 @@ export default function QRGenerator() {
                       </div>
                     </Label>
                     <Input
-                      className="bg-input border-border text-foreground placeholder:text-muted-foreground focus:border-secondary focus:ring-secondary/20"
+                      className={`bg-input text-foreground placeholder:text-muted-foreground transition-all duration-300 ${getValidationClasses()}`}
                       id="maps-url"
                       placeholder="Paste Google Maps share link (e.g., https://maps.app.goo.gl/...)"
                       value={qrData.location.mapsUrl}
@@ -332,9 +596,14 @@ export default function QRGenerator() {
                     />
                     <p className="text-xs text-muted-foreground mt-1">
                       {isShortenedMapsUrl(qrData.location.mapsUrl) 
-                        ? "✓ Shortened link detected - will be used directly in QR code"
+                        ? "Shortened link detected - will be used directly in QR code"
                         : "Paste any Google Maps link - coordinates will be extracted if available"}
                     </p>
+                    {validationState === "valid" && hasValidContent() && (
+                      <p className="text-xs text-green-500 mt-1 flex items-center gap-1">
+                        <Check className="h-3 w-3" /> Valid location
+                      </p>
+                    )}
                   </div>
                   
                   <div className="relative">
@@ -429,43 +698,134 @@ export default function QRGenerator() {
                     </Select>
                   </div>
                 </div>
+
+                {/* Color Customization */}
+                <div className="space-y-3">
+                  <h4 className="text-sm font-medium text-foreground">QR Code Colors</h4>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label className="text-foreground font-medium text-xs">Foreground</Label>
+                      <div className="flex gap-2 mt-1 flex-wrap">
+                        {colorPresets.foreground.map((color) => (
+                          <button
+                            key={color.value}
+                            onClick={() => setQrColors(prev => ({ ...prev, foreground: color.value }))}
+                            className={`w-7 h-7 rounded-full border-2 transition-all duration-200 hover:scale-110 ${
+                              qrColors.foreground === color.value ? "border-secondary ring-2 ring-secondary/30" : "border-border"
+                            }`}
+                            style={{ backgroundColor: color.value }}
+                            title={color.label}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <Label className="text-foreground font-medium text-xs">Background</Label>
+                      <div className="flex gap-2 mt-1 flex-wrap">
+                        {colorPresets.background.map((color) => (
+                          <button
+                            key={color.value}
+                            onClick={() => setQrColors(prev => ({ ...prev, background: color.value }))}
+                            className={`w-7 h-7 rounded-full border-2 transition-all duration-200 hover:scale-110 ${
+                              qrColors.background === color.value ? "border-secondary ring-2 ring-secondary/30" : "border-border"
+                            }`}
+                            style={{ backgroundColor: color.value }}
+                            title={color.label}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             </CardContent>
           </Card>
 
-          {/* QR Code Display Section - Only show when there's content */}
-          {hasValidContent() && (
-            <Card className="bg-card border-border shadow-2xl">
-              <CardHeader className="border-b border-border">
-                <CardTitle className="text-foreground">Generated QR Code</CardTitle>
-                <CardDescription className="text-muted-foreground">
-                  Scan with your device or download the image
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-col items-center space-y-4">
-                <div className="bg-white p-6 rounded-xl shadow-inner border border-border">
-                  <canvas ref={canvasRef} className="max-w-full h-auto" style={{ imageRendering: "pixelated" }} />
-                </div>
+          {/* QR Code Display Section */}
+          <Card className="bg-card/80 backdrop-blur-sm border-border shadow-2xl shadow-black/10 dark:shadow-black/30 hover:shadow-3xl transition-all duration-500">
+            <CardHeader className="border-b border-border">
+              <CardTitle className="text-foreground flex items-center gap-2">
+                <QrCode className="h-5 w-5 text-secondary" />
+                Generated QR Code
+              </CardTitle>
+              <CardDescription className="text-muted-foreground">
+                {hasValidContent() ? "Scan with your device or download the image" : "Enter content on the left to generate a QR code"}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col items-center space-y-4 pt-6">
+              {/* QR Code Display */}
+              <div 
+                className={`relative p-6 rounded-2xl shadow-inner border border-border transition-all duration-500 ${
+                  isGenerating ? "scale-95 opacity-50" : "scale-100 opacity-100"
+                }`}
+                style={{ backgroundColor: qrColors.background }}
+              >
+                {hasValidContent() ? (
+                  <canvas 
+                    ref={canvasRef} 
+                    className={`max-w-full h-auto transition-all duration-300 ${isGenerating ? "blur-sm" : "blur-0"}`}
+                    style={{ imageRendering: "pixelated" }} 
+                  />
+                ) : (
+                  /* Empty State Placeholder */
+                  <div className="w-48 h-48 flex flex-col items-center justify-center text-center">
+                    <div className="w-32 h-32 border-4 border-dashed border-gray-300 rounded-lg flex items-center justify-center mb-3">
+                      <QrCode className="h-12 w-12 text-gray-300" />
+                    </div>
+                    <p className="text-sm text-gray-400">Your QR code will appear here</p>
+                  </div>
+                )}
+                
+                {/* Generating Animation Overlay */}
+                {isGenerating && hasValidContent() && (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="w-8 h-8 border-4 border-secondary border-t-transparent rounded-full animate-spin" />
+                  </div>
+                )}
+              </div>
 
-                {qrCodeUrl && (
+              {/* Action Buttons */}
+              {hasValidContent() && qrCodeUrl && (
+                <div className="w-full space-y-3 animate-in fade-in slide-in-from-bottom-4 duration-500">
                   <Button
                     onClick={downloadQRCode}
-                    className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-medium py-3 shadow-lg hover:shadow-xl transition-all duration-200"
+                    className="w-full bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-600 hover:to-cyan-600 text-white font-medium py-3 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.02]"
                   >
                     <Download className="mr-2 h-4 w-4" />
                     Download QR Code
                   </Button>
-                )}
+                  
+                  <Button
+                    variant="outline"
+                    onClick={copyToClipboard}
+                    className="w-full border-border hover:bg-muted transition-all duration-300"
+                  >
+                    {copied ? (
+                      <>
+                        <Check className="mr-2 h-4 w-4 text-green-500" />
+                        Copied to Clipboard!
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="mr-2 h-4 w-4" />
+                        Copy Data
+                      </>
+                    )}
+                  </Button>
+                </div>
+              )}
 
-                <div className="w-full">
+              {/* Preview Data */}
+              {hasValidContent() && (
+                <div className="w-full animate-in fade-in duration-300">
                   <Label className="text-foreground font-medium">Preview Data:</Label>
-                  <div className="mt-2 p-3 bg-muted border border-border rounded-md text-sm font-mono break-all max-h-32 overflow-y-auto text-secondary">
+                  <div className="mt-2 p-3 bg-muted/50 border border-border rounded-md text-sm font-mono break-all max-h-32 overflow-y-auto text-secondary">
                     {generateQRString()}
                   </div>
                 </div>
-              </CardContent>
-            </Card>
-          )}
+              )}
+            </CardContent>
+          </Card>
         </div>
       </div>
     </div>

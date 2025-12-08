@@ -11,8 +11,8 @@ interface LinkData {
   clicks: number
 }
 
-// Use Vercel KV in production, local storage in development
-const isProduction = process.env.KV_REST_API_URL !== undefined
+// Use Vercel KV/Upstash in production, local storage in development
+const isProduction = !!(process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL)
 
 async function getLink(slug: string): Promise<LinkData | null> {
   if (isProduction) {

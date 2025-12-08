@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -18,10 +19,12 @@ import {
   ArrowLeft,
   QrCode,
   X,
-  Download
+  Download,
+  Lock
 } from "lucide-react"
 import { ThemeToggle } from "@/components/theme-toggle"
 import Link from "next/link"
+import { PasswordModal } from "@/components/password-modal"
 
 interface LinkData {
   slug: string
@@ -33,6 +36,7 @@ interface LinkData {
 }
 
 export default function AdminPage() {
+  const router = useRouter()
   const [links, setLinks] = useState<LinkData[]>([])
   const [loading, setLoading] = useState(true)
   const [editingSlug, setEditingSlug] = useState<string | null>(null)
@@ -40,9 +44,48 @@ export default function AdminPage() {
   const [isLocal, setIsLocal] = useState(false)
   const [viewingQR, setViewingQR] = useState<LinkData | null>(null)
   
+  // Auth states
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [isAuthSetup, setIsAuthSetup] = useState(true)
+  const [checkingAuth, setCheckingAuth] = useState(true)
+  const [showPasswordModal, setShowPasswordModal] = useState(false)
+  
   // Form states
   const [editDestination, setEditDestination] = useState("")
   const [error, setError] = useState("")
+
+  // Check auth on mount
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const res = await fetch("/api/auth?action=status")
+        const data = await res.json()
+        setIsAuthSetup(data.isSetup)
+        setIsAuthenticated(data.isAuthenticated)
+        
+        if (!data.isSetup) {
+          // Redirect to setup
+          router.push("/setup")
+          return
+        }
+        
+        if (!data.isAuthenticated) {
+          setShowPasswordModal(true)
+        }
+      } catch (err) {
+        console.error("Failed to check auth:", err)
+      } finally {
+        setCheckingAuth(false)
+      }
+    }
+    checkAuth()
+  }, [router])
+
+  const handleAuthSuccess = () => {
+    setIsAuthenticated(true)
+    setShowPasswordModal(false)
+    fetchLinks()
+  }
 
   const fetchLinks = async () => {
     setLoading(true)
@@ -63,8 +106,10 @@ export default function AdminPage() {
   }
 
   useEffect(() => {
-    fetchLinks()
-  }, [])
+    if (isAuthenticated) {
+      fetchLinks()
+    }
+  }, [isAuthenticated])
 
   const updateLink = async (slug: string) => {
     if (!editDestination.trim()) {
@@ -137,6 +182,51 @@ export default function AdminPage() {
       hour: "2-digit",
       minute: "2-digit",
     })
+  }
+
+  // Show loading while checking auth
+  if (checkingAuth) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <RefreshCw className="h-8 w-8 animate-spin mx-auto mb-2 text-muted-foreground" />
+          <p className="text-muted-foreground">Checking authentication...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // Show password modal if not authenticated
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-background p-4 transition-colors duration-500">
+        <div className="fixed top-4 right-4 z-50">
+          <ThemeToggle />
+        </div>
+        
+        <div className="max-w-md mx-auto mt-20">
+          <Card className="bg-card/80 backdrop-blur-sm border-border shadow-xl">
+            <CardHeader className="text-center">
+              <div className="mx-auto mb-4 p-3 bg-gradient-to-br from-emerald-500/20 to-cyan-500/20 rounded-full w-fit">
+                <Lock className="h-8 w-8 text-emerald-500" />
+              </div>
+              <CardTitle>Link Manager</CardTitle>
+              <CardDescription>
+                Enter your password to access the Link Manager
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        </div>
+
+        <PasswordModal
+          isOpen={showPasswordModal}
+          onClose={() => router.push("/")}
+          onSuccess={handleAuthSuccess}
+          title="Link Manager Access"
+          description="Enter your password to manage your links"
+        />
+      </div>
+    )
   }
 
   return (

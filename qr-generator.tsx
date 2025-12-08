@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef, useCallback } from "react"
+import { useRouter } from "next/navigation"
 import QRCode from "qrcode"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
@@ -13,6 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Download, Smartphone, Phone, MessageSquare, MapPin, Globe, Link as LinkIcon, Copy, Check, History, Trash2, QrCode, Settings, Save, RefreshCw, ExternalLink, Loader2 } from "lucide-react"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { PasswordModal } from "@/components/password-modal"
 
 interface QRData {
   text: string
@@ -93,6 +95,13 @@ export default function QRGenerator() {
     redirectUrl: string
   } | null>(null)
 
+  // Authentication state
+  const router = useRouter()
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [isAuthSetup, setIsAuthSetup] = useState(true) // Assume setup until checked
+  const [showPasswordModal, setShowPasswordModal] = useState(false)
+  const [pendingAction, setPendingAction] = useState<(() => void) | null>(null)
+
   // Load history from localStorage on mount
   useEffect(() => {
     const savedHistory = localStorage.getItem("qr-history")
@@ -109,10 +118,29 @@ export default function QRGenerator() {
           setHistory(parsed)
         }
       } catch {
-        // Invalid JSON, clear corrupted data
-        localStorage.removeItem("qr-history")
+        // Invalid data, ignore
       }
     }
+  }, [])
+
+  // Check auth status on mount
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const res = await fetch("/api/auth?action=status")
+        const data = await res.json()
+        setIsAuthSetup(data.isSetup)
+        setIsAuthenticated(data.isAuthenticated)
+        
+        // If not set up, redirect to setup page
+        if (!data.isSetup) {
+          // Don't redirect automatically, let user click Create Dynamic QR first
+        }
+      } catch (err) {
+        console.error("Failed to check auth status:", err)
+      }
+    }
+    checkAuth()
   }, [])
 
   // Parse coordinates from various Google Maps URL formats
@@ -487,6 +515,35 @@ export default function QRGenerator() {
       result += chars.charAt(Math.floor(Math.random() * chars.length))
     }
     return result
+  }
+
+  // Require authentication before performing an action
+  const requireAuth = (action: () => void) => {
+    if (!isAuthSetup) {
+      // Redirect to setup page
+      router.push("/setup")
+      return
+    }
+    
+    if (isAuthenticated) {
+      // Already authenticated, perform action
+      action()
+    } else {
+      // Show password modal
+      setPendingAction(() => action)
+      setShowPasswordModal(true)
+    }
+  }
+
+  // Handle successful authentication
+  const handleAuthSuccess = () => {
+    setIsAuthenticated(true)
+    setShowPasswordModal(false)
+    // Execute pending action
+    if (pendingAction) {
+      pendingAction()
+      setPendingAction(null)
+    }
   }
 
   // Create a dynamic/managed link - creates slug immediately, QR shows redirect URL
@@ -1240,7 +1297,7 @@ export default function QRGenerator() {
                   ) : (
                     <Button
                       variant="outline"
-                      onClick={createDynamicLink}
+                      onClick={() => requireAuth(createDynamicLink)}
                       disabled={savingLink || !hasValidContent()}
                       className="w-full border-border hover:bg-muted transition-all duration-300"
                     >
@@ -1352,6 +1409,18 @@ export default function QRGenerator() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Password Modal */}
+      <PasswordModal
+        isOpen={showPasswordModal}
+        onClose={() => {
+          setShowPasswordModal(false)
+          setPendingAction(null)
+        }}
+        onSuccess={handleAuthSuccess}
+        title="Authentication Required"
+        description="Enter your password to create a dynamic QR code"
+      />
     </div>
   )
 }

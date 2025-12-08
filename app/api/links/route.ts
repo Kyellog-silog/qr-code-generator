@@ -14,6 +14,11 @@ interface LinkData {
   qrCode?: string // Base64 data URL of the QR code image
 }
 
+interface SessionData {
+  createdAt: number
+  expiresAt: number
+}
+
 // Use Vercel KV/Upstash in production, local storage in development
 const isProduction = !!(process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL)
 
@@ -47,20 +52,26 @@ const storage = {
   }
 }
 
-// Simple auth check - in production, use proper authentication
-const isAuthorized = (request: NextRequest): boolean => {
-  const authHeader = request.headers.get("authorization")
-  const apiKey = process.env.ADMIN_API_KEY
+// Session-based authentication check
+const isAuthorized = async (request: NextRequest): Promise<boolean> => {
+  const sessionToken = request.cookies.get("session")?.value
   
-  // If no API key is set, allow all requests (development mode)
-  if (!apiKey) return true
+  if (!sessionToken) {
+    return false
+  }
   
-  return authHeader === `Bearer ${apiKey}`
+  const session = await storage.get<SessionData>(`session:${sessionToken}`)
+  
+  if (!session || session.expiresAt < Date.now()) {
+    return false
+  }
+  
+  return true
 }
 
 // GET - List all links or get a specific link
 export async function GET(request: NextRequest) {
-  if (!isAuthorized(request)) {
+  if (!(await isAuthorized(request))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
@@ -103,7 +114,7 @@ export async function GET(request: NextRequest) {
 
 // POST - Create a new link
 export async function POST(request: NextRequest) {
-  if (!isAuthorized(request)) {
+  if (!(await isAuthorized(request))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
@@ -171,7 +182,7 @@ export async function POST(request: NextRequest) {
 
 // PUT - Update an existing link's destination
 export async function PUT(request: NextRequest) {
-  if (!isAuthorized(request)) {
+  if (!(await isAuthorized(request))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
@@ -223,7 +234,7 @@ export async function PUT(request: NextRequest) {
 
 // DELETE - Remove a link
 export async function DELETE(request: NextRequest) {
-  if (!isAuthorized(request)) {
+  if (!(await isAuthorized(request))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 

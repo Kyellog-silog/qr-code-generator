@@ -282,10 +282,9 @@ export async function POST(request: NextRequest) {
     if (action === "logout") {
       const sessionToken = request.cookies.get("session")?.value
       
-      // Optionally delete session from storage
+      // Delete session from storage to prevent reuse
       if (sessionToken) {
-        // We could delete it, but for edge runtime we'll just let it expire
-        // await storage.del(`session:${sessionToken}`)
+        await storage.del(`session:${sessionToken}`)
       }
       
       const response = NextResponse.json({ success: true })

@@ -32,6 +32,19 @@ import {
 import { ThemeToggle } from "@/components/theme-toggle"
 import Link from "next/link"
 import { PasswordModal } from "@/components/password-modal"
+import {
+  isPhoneUrl,
+  parsePhoneUrl,
+  buildPhoneUrl,
+  isHttpUrl,
+  isSmsUrl,
+  parseSmsUrl,
+  isLocationUrl,
+  parseLocationUrl,
+  buildLocationUrl,
+  getLinkType,
+  type LinkType,
+} from "@/lib/link-utils"
 
 interface LinkData {
   slug: string
@@ -72,83 +85,11 @@ export default function AdminPage() {
   
   // Search and filter state
   const [searchQuery, setSearchQuery] = useState("")
-  const [filterType, setFilterType] = useState<"all" | "url" | "phone" | "sms" | "location">("all")
+  const [filterType, setFilterType] = useState<"all" | LinkType>("all")
 
-  // Helper functions for phone detection and parsing
-  const isPhoneUrl = (url: string): boolean => {
-    return url.startsWith("tel:")
-  }
-
-  const parsePhoneUrl = (url: string): string => {
-    return url.replace(/^tel:/, "")
-  }
-
-  const buildPhoneUrl = (phone: string): string => {
-    // Remove any existing tel: prefix and clean the number
-    const cleanPhone = phone.replace(/^tel:/, "").trim()
-    if (!cleanPhone) return ""
-    return `tel:${cleanPhone}`
-  }
-
-  // Helper functions for type detection and parsing
-  const isUrlType = (url: string): boolean => {
-    return url.startsWith("http://") || url.startsWith("https://")
-  }
-
-  const isSmsUrl = (url: string): boolean => {
-    return url.toLowerCase().startsWith("sms:") || url.toLowerCase().startsWith("smsto:")
-  }
-
-  const parseSmsUrl = (url: string): { number: string; message?: string } => {
-    // Parse sms:+1234567890?body=Hello or smsto:+1234567890:Hello
-    const cleaned = url.replace(/^(sms:|smsto:)/i, "")
-    if (cleaned.includes("?body=")) {
-      const [number, rest] = cleaned.split("?body=")
-      return { number, message: decodeURIComponent(rest || "") }
-    }
-    if (cleaned.includes(":")) {
-      const [number, message] = cleaned.split(":")
-      return { number, message }
-    }
-    return { number: cleaned }
-  }
-
-  const isLocationUrl = (url: string): boolean => {
-    return url.includes("google.com/maps") || url.includes("maps.google.com")
-  }
-
-  const parseLocationUrl = (url: string): { type: "coordinates" | "address", lat?: string, lng?: string, address?: string } | null => {
-    // Pattern: ?q=lat,lng (coordinates)
-    const coordMatch = url.match(/[?&]q=(-?\d+\.?\d*),(-?\d+\.?\d*)/)
-    if (coordMatch) {
-      return { type: "coordinates", lat: coordMatch[1], lng: coordMatch[2] }
-    }
-    
-    // Pattern: /search/?api=1&query=address (address search)
-    const addressMatch = url.match(/query=([^&]+)/)
-    if (addressMatch) {
-      return { type: "address", address: decodeURIComponent(addressMatch[1]) }
-    }
-    
-    return null
-  }
-
-  const buildLocationUrl = (type: "address" | "coordinates", address?: string, lat?: string, lng?: string): string => {
-    if (type === "coordinates" && lat && lng) {
-      return `https://www.google.com/maps?q=${lat},${lng}`
-    }
-    if (type === "address" && address) {
-      return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address.trim())}`
-    }
-    return ""
-  }
-
-  // Get the type of a link for filtering
-  const getLinkType = (destination: string): "url" | "phone" | "sms" | "location" => {
-    if (isPhoneUrl(destination)) return "phone"
-    if (isSmsUrl(destination)) return "sms"
-    if (isLocationUrl(destination)) return "location"
-    return "url"
+  // Wrapper for buildLocationUrl to match previous function signature
+  const buildLocationUrlWrapper = (type: "address" | "coordinates", address?: string, lat?: string, lng?: string): string => {
+    return buildLocationUrl(type, { address, lat, lng })
   }
 
   // Filter and search links
@@ -227,10 +168,10 @@ export default function AdminPage() {
     }
     // Check if we're editing a location
     if (editLocationType === "coordinates") {
-      return buildLocationUrl("coordinates", undefined, editLocationLat, editLocationLng)
+      return buildLocationUrlWrapper("coordinates", undefined, editLocationLat, editLocationLng)
     }
     if (editLocationType === "address") {
-      return buildLocationUrl("address", editLocationAddress)
+      return buildLocationUrlWrapper("address", editLocationAddress)
     }
     return editDestination
   }
@@ -615,7 +556,7 @@ export default function AdminPage() {
                               SMS
                             </span>
                           )}
-                          {isUrlType(link.destination) && !isLocationUrl(link.destination) && (
+                          {isHttpUrl(link.destination) && !isLocationUrl(link.destination) && (
                             <span className="flex items-center gap-1 text-xs text-cyan-500 bg-cyan-500/10 px-2 py-0.5 rounded">
                               <Globe className="h-3 w-3" />
                               URL

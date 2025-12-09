@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { storage, isProduction } from "@/lib/storage"
+import { sanitizeDestination } from "@/lib/link-utils"
 
 export const runtime = "edge"
 
@@ -103,6 +104,15 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // Sanitize destination to prevent XSS
+    const sanitizedDestination = sanitizeDestination(destination)
+    if (!sanitizedDestination) {
+      return NextResponse.json(
+        { error: "Invalid or unsafe destination URL" },
+        { status: 400 }
+      )
+    }
+
     // Check if slug already exists
     const existing = await storage.get(`link:${slug}`)
     if (existing) {
@@ -112,19 +122,9 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Validate destination URL
-    try {
-      new URL(destination)
-    } catch {
-      return NextResponse.json(
-        { error: "destination must be a valid URL" },
-        { status: 400 }
-      )
-    }
-
     const now = Date.now()
     const linkData: Omit<LinkData, "slug"> = {
-      destination,
+      destination: sanitizedDestination,
       createdAt: now,
       updatedAt: now,
       clicks: 0,
@@ -169,13 +169,13 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: "Link not found" }, { status: 404 })
     }
 
-    // Validate destination URL if provided
+    // Sanitize destination URL if provided
+    let sanitizedDestination: string | undefined
     if (destination) {
-      try {
-        new URL(destination)
-      } catch {
+      sanitizedDestination = sanitizeDestination(destination) ?? undefined
+      if (!sanitizedDestination) {
         return NextResponse.json(
-          { error: "destination must be a valid URL" },
+          { error: "Invalid or unsafe destination URL" },
           { status: 400 }
         )
       }
@@ -183,7 +183,7 @@ export async function PUT(request: NextRequest) {
 
     const updatedData = {
       ...existing,
-      ...(destination && { destination }),
+      ...(sanitizedDestination && { destination: sanitizedDestination }),
       ...(newStatus && { status: newStatus }),
       ...(qrCode && { qrCode }), // Update QR code if provided
       updatedAt: Date.now(),

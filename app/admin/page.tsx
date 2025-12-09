@@ -8,6 +8,16 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { 
   Plus, 
   Trash2, 
@@ -88,6 +98,10 @@ export default function AdminPage() {
   // Search and filter state
   const [searchQuery, setSearchQuery] = useState("")
   const [filterType, setFilterType] = useState<"all" | LinkType>("all")
+  
+  // Delete confirmation state
+  const [deleteConfirmSlug, setDeleteConfirmSlug] = useState<string | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   // Wrapper for buildLocationUrl to match previous function signature
   const buildLocationUrlWrapper = (type: "address" | "coordinates", address?: string, lat?: string, lng?: string): string => {
@@ -265,8 +279,7 @@ export default function AdminPage() {
   }
 
   const deleteLink = async (slug: string) => {
-    if (!confirm(`Delete /${slug}? This cannot be undone.`)) return
-
+    setIsDeleting(true)
     try {
       const res = await fetch(`/api/links?slug=${slug}`, {
         method: "DELETE",
@@ -281,6 +294,9 @@ export default function AdminPage() {
       fetchLinks()
     } catch (err) {
       setError("Failed to delete link")
+    } finally {
+      setIsDeleting(false)
+      setDeleteConfirmSlug(null)
     }
   }
 
@@ -760,7 +776,7 @@ export default function AdminPage() {
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 text-destructive hover:text-destructive"
-                          onClick={() => deleteLink(link.slug)}
+                          onClick={() => setDeleteConfirmSlug(link.slug)}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -836,6 +852,43 @@ export default function AdminPage() {
           </Card>
         </div>
       )}
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={!!deleteConfirmSlug} onOpenChange={(open) => !open && setDeleteConfirmSlug(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <Trash2 className="h-5 w-5 text-destructive" />
+              Delete Link
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete <span className="font-semibold text-foreground">/r/{deleteConfirmSlug}</span>?
+              <br /><br />
+              This action cannot be undone. Any QR codes pointing to this link will stop working.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteConfirmSlug && deleteLink(deleteConfirmSlug)}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete
+                </>
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

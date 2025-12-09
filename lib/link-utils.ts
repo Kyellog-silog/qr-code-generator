@@ -43,14 +43,46 @@ export function isShortenedMapsUrl(url: string): boolean {
 }
 
 /**
+ * Check if a destination is plain text (not a URL or special protocol)
+ */
+export function isPlainText(destination: string): boolean {
+  // Plain text doesn't have a protocol and usually has spaces
+  if (!destination) return false
+  const lower = destination.toLowerCase()
+  
+  // If it has a known protocol, it's not plain text
+  if (lower.startsWith("http://") || lower.startsWith("https://") ||
+      lower.startsWith("tel:") || lower.startsWith("sms:") || 
+      lower.startsWith("smsto:") || lower.startsWith("geo:") ||
+      lower.startsWith("mailto:")) {
+    return false
+  }
+  
+  // If it has spaces, it's likely plain text
+  if (destination.includes(" ")) {
+    return true
+  }
+  
+  // If it looks like a URL (has a domain-like structure), it's not plain text
+  // e.g., "example.com" or "test.org/path"
+  if (/^[a-zA-Z0-9][a-zA-Z0-9-]*\.[a-zA-Z]{2,}/.test(destination)) {
+    return false
+  }
+  
+  // Everything else without a protocol is considered plain text
+  return true
+}
+
+/**
  * Get the type of a link for categorization/filtering
  */
-export type LinkType = "url" | "phone" | "sms" | "location"
+export type LinkType = "url" | "phone" | "sms" | "location" | "text"
 
 export function getLinkType(destination: string): LinkType {
   if (isPhoneUrl(destination)) return "phone"
   if (isSmsUrl(destination)) return "sms"
   if (isLocationUrl(destination)) return "location"
+  if (isPlainText(destination)) return "text"
   return "url"
 }
 
@@ -281,8 +313,13 @@ export function sanitizeDestination(destination: string): string | null {
     }
   }
   
-  // If no protocol, assume https
+  // If no protocol, check if it's plain text or a URL-like string
   if (!trimmed.includes("://")) {
+    // If it looks like plain text (has spaces, doesn't look like a domain), keep as-is
+    if (isPlainText(trimmed)) {
+      return trimmed
+    }
+    // Otherwise assume it's a URL without protocol
     return `https://${trimmed}`
   }
   

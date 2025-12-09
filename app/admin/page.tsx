@@ -42,6 +42,7 @@ import {
   isLocationUrl,
   parseLocationUrl,
   buildLocationUrl,
+  isPlainText,
   getLinkType,
   type LinkType,
 } from "@/lib/link-utils"
@@ -456,6 +457,15 @@ export default function AdminPage() {
                   <MapPin className="h-3 w-3 mr-1" />
                   Location
                 </Button>
+                <Button
+                  size="sm"
+                  variant={filterType === "text" ? "default" : "outline"}
+                  onClick={() => setFilterType("text")}
+                  className={filterType === "text" ? "bg-amber-500 hover:bg-amber-600" : ""}
+                >
+                  <MessageSquare className="h-3 w-3 mr-1" />
+                  Text
+                </Button>
               </div>
             </div>
 
@@ -560,6 +570,12 @@ export default function AdminPage() {
                             <span className="flex items-center gap-1 text-xs text-cyan-500 bg-cyan-500/10 px-2 py-0.5 rounded">
                               <Globe className="h-3 w-3" />
                               URL
+                            </span>
+                          )}
+                          {isPlainText(link.destination) && (
+                            <span className="flex items-center gap-1 text-xs text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded">
+                              <MessageSquare className="h-3 w-3" />
+                              Text
                             </span>
                           )}
                         </div>

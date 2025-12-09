@@ -21,7 +21,8 @@ import {
   X,
   Download,
   Lock,
-  MapPin
+  MapPin,
+  Phone
 } from "lucide-react"
 import { ThemeToggle } from "@/components/theme-toggle"
 import Link from "next/link"
@@ -60,6 +61,25 @@ export default function AdminPage() {
   const [editLocationType, setEditLocationType] = useState<"url" | "address" | "coordinates">("url")
   const [editLocationLat, setEditLocationLat] = useState("")
   const [editLocationLng, setEditLocationLng] = useState("")
+  
+  // Phone editing state
+  const [editPhoneNumber, setEditPhoneNumber] = useState("")
+
+  // Helper functions for phone detection and parsing
+  const isPhoneUrl = (url: string): boolean => {
+    return url.startsWith("tel:")
+  }
+
+  const parsePhoneUrl = (url: string): string => {
+    return url.replace(/^tel:/, "")
+  }
+
+  const buildPhoneUrl = (phone: string): string => {
+    // Remove any existing tel: prefix and clean the number
+    const cleanPhone = phone.replace(/^tel:/, "").trim()
+    if (!cleanPhone) return ""
+    return `tel:${cleanPhone}`
+  }
 
   // Helper functions for location detection and parsing
   const isLocationUrl = (url: string): boolean => {
@@ -96,8 +116,19 @@ export default function AdminPage() {
     setEditingSlug(link.slug)
     setEditDestination(link.destination)
     
+    // Check if it's a phone URL
+    if (isPhoneUrl(link.destination)) {
+      setEditPhoneNumber(parsePhoneUrl(link.destination))
+      setEditLocationType("url")
+      setEditLocationAddress("")
+      setEditLocationLat("")
+      setEditLocationLng("")
+      return
+    }
+    
     // Check if it's a location URL and parse it
     if (isLocationUrl(link.destination)) {
+      setEditPhoneNumber("")
       const parsed = parseLocationUrl(link.destination)
       if (parsed?.type === "coordinates") {
         setEditLocationType("coordinates")
@@ -117,6 +148,7 @@ export default function AdminPage() {
       setEditLocationAddress("")
       setEditLocationLat("")
       setEditLocationLng("")
+      setEditPhoneNumber("")
     }
   }
 
@@ -127,9 +159,15 @@ export default function AdminPage() {
     setEditLocationAddress("")
     setEditLocationLat("")
     setEditLocationLng("")
+    setEditPhoneNumber("")
   }
 
   const getEditedDestination = (): string => {
+    // Check if we're editing a phone number
+    if (editPhoneNumber || isPhoneUrl(editDestination)) {
+      return buildPhoneUrl(editPhoneNumber || editDestination)
+    }
+    // Check if we're editing a location
     if (editLocationType === "coordinates") {
       return buildLocationUrl("coordinates", undefined, editLocationLat, editLocationLng)
     }
@@ -410,12 +448,34 @@ export default function AdminPage() {
                               Location
                             </span>
                           )}
+                          {isPhoneUrl(link.destination) && (
+                            <span className="flex items-center gap-1 text-xs text-blue-500 bg-blue-500/10 px-2 py-0.5 rounded">
+                              <Phone className="h-3 w-3" />
+                              Phone
+                            </span>
+                          )}
                         </div>
 
                         {editingSlug === link.slug ? (
                           <div className="space-y-2 mt-2">
-                            {/* Location-specific editor */}
-                            {isLocationUrl(link.destination) ? (
+                            {/* Phone-specific editor */}
+                            {isPhoneUrl(link.destination) ? (
+                              <div className="space-y-2">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm text-muted-foreground font-mono bg-muted px-2 py-1 rounded">tel:</span>
+                                  <Input
+                                    value={editPhoneNumber}
+                                    onChange={(e) => setEditPhoneNumber(e.target.value)}
+                                    placeholder="Phone number (e.g., +1 650 200-3809)"
+                                    className="flex-1"
+                                  />
+                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                  The &quot;tel:&quot; prefix will be automatically added when saving
+                                </p>
+                              </div>
+                            ) : isLocationUrl(link.destination) ? (
+                              /* Location-specific editor */
                               <div className="space-y-2">
                                 <div className="flex gap-2">
                                   <Button
@@ -508,7 +568,12 @@ export default function AdminPage() {
                           </div>
                         ) : (
                           <p className="text-sm text-muted-foreground truncate">
-                            → {isLocationUrl(link.destination) ? (
+                            → {isPhoneUrl(link.destination) ? (
+                              <span className="flex items-center gap-1">
+                                <Phone className="h-3 w-3 inline" />
+                                {parsePhoneUrl(link.destination)}
+                              </span>
+                            ) : isLocationUrl(link.destination) ? (
                               <span className="flex items-center gap-1">
                                 <MapPin className="h-3 w-3 inline" />
                                 {parseLocationUrl(link.destination)?.address || 

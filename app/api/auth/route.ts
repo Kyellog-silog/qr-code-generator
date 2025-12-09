@@ -8,6 +8,17 @@ export const runtime = "edge"
 // Use Vercel KV/Upstash in production, local storage in development
 const isProduction = !!(process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL)
 
+// Rate limiting configuration
+const MAX_LOGIN_ATTEMPTS = 5 // Max attempts before lockout
+const LOCKOUT_DURATION = 15 * 60 * 1000 // 15 minutes lockout
+const ATTEMPT_WINDOW = 15 * 60 * 1000 // 15 minute window for counting attempts
+
+interface RateLimitData {
+  attempts: number
+  firstAttempt: number
+  lockedUntil?: number
+}
+
 // Storage abstraction
 const storage = {
   async get<T>(key: string): Promise<T | null> {
@@ -23,6 +34,93 @@ const storage = {
       localKV.set(key, value)
     }
   },
+  async del(key: string): Promise<void> {
+    if (isProduction) {
+      await kv.del(key)
+    } else {
+      localKV.del(key)
+    }
+  },
+}
+
+// Get client IP for rate limiting
+function getClientIP(request: NextRequest): string {
+  // Try various headers that might contain the real IP
+  const forwardedFor = request.headers.get("x-forwarded-for")
+  if (forwardedFor) {
+    return forwardedFor.split(",")[0].trim()
+  }
+  const realIP = request.headers.get("x-real-ip")
+  if (realIP) {
+    return realIP
+  }
+  // Fallback - in production this might not be accurate
+  return "unknown"
+}
+
+// Check and update rate limit
+async function checkRateLimit(ip: string): Promise<{ allowed: boolean; remainingAttempts?: number; lockedUntil?: number }> {
+  const key = `ratelimit:${ip}`
+  const now = Date.now()
+  
+  const data = await storage.get<RateLimitData>(key)
+  
+  // Check if currently locked out
+  if (data?.lockedUntil && data.lockedUntil > now) {
+    const remainingSeconds = Math.ceil((data.lockedUntil - now) / 1000)
+    return { allowed: false, lockedUntil: data.lockedUntil }
+  }
+  
+  // Reset if window has expired
+  if (!data || (now - data.firstAttempt) > ATTEMPT_WINDOW) {
+    return { allowed: true, remainingAttempts: MAX_LOGIN_ATTEMPTS }
+  }
+  
+  // Check remaining attempts
+  if (data.attempts >= MAX_LOGIN_ATTEMPTS) {
+    // Lock the account
+    const lockedUntil = now + LOCKOUT_DURATION
+    await storage.set(key, { ...data, lockedUntil })
+    return { allowed: false, lockedUntil }
+  }
+  
+  return { allowed: true, remainingAttempts: MAX_LOGIN_ATTEMPTS - data.attempts }
+}
+
+// Record a failed login attempt
+async function recordFailedAttempt(ip: string): Promise<{ remainingAttempts: number; locked: boolean }> {
+  const key = `ratelimit:${ip}`
+  const now = Date.now()
+  
+  const data = await storage.get<RateLimitData>(key)
+  
+  let newData: RateLimitData
+  
+  if (!data || (now - data.firstAttempt) > ATTEMPT_WINDOW) {
+    // Start fresh window
+    newData = { attempts: 1, firstAttempt: now }
+  } else {
+    // Increment attempts
+    newData = { ...data, attempts: data.attempts + 1 }
+    
+    // Check if we should lock
+    if (newData.attempts >= MAX_LOGIN_ATTEMPTS) {
+      newData.lockedUntil = now + LOCKOUT_DURATION
+    }
+  }
+  
+  await storage.set(key, newData)
+  
+  return {
+    remainingAttempts: Math.max(0, MAX_LOGIN_ATTEMPTS - newData.attempts),
+    locked: !!newData.lockedUntil
+  }
+}
+
+// Clear rate limit on successful login
+async function clearRateLimit(ip: string): Promise<void> {
+  const key = `ratelimit:${ip}`
+  await storage.del(key)
 }
 
 // Session token generation
@@ -139,6 +237,21 @@ export async function POST(request: NextRequest) {
     
     // Login with password
     if (action === "login") {
+      // Check rate limiting first
+      const clientIP = getClientIP(request)
+      const rateLimit = await checkRateLimit(clientIP)
+      
+      if (!rateLimit.allowed) {
+        const remainingTime = rateLimit.lockedUntil 
+          ? Math.ceil((rateLimit.lockedUntil - Date.now()) / 1000 / 60) 
+          : 15
+        return NextResponse.json({ 
+          error: `Too many failed attempts. Please try again in ${remainingTime} minute${remainingTime !== 1 ? 's' : ''}.`,
+          locked: true,
+          lockedUntil: rateLimit.lockedUntil
+        }, { status: 429 })
+      }
+      
       const authData = await storage.get<AuthData>("auth:password")
       
       if (!authData?.passwordHash) {
@@ -153,8 +266,24 @@ export async function POST(request: NextRequest) {
       const isValid = await bcrypt.compare(password, authData.passwordHash)
       
       if (!isValid) {
-        return NextResponse.json({ error: "Invalid password" }, { status: 401 })
+        // Record failed attempt
+        const attemptResult = await recordFailedAttempt(clientIP)
+        
+        if (attemptResult.locked) {
+          return NextResponse.json({ 
+            error: `Too many failed attempts. Account locked for 15 minutes.`,
+            locked: true
+          }, { status: 429 })
+        }
+        
+        return NextResponse.json({ 
+          error: `Invalid password. ${attemptResult.remainingAttempts} attempt${attemptResult.remainingAttempts !== 1 ? 's' : ''} remaining.`,
+          remainingAttempts: attemptResult.remainingAttempts
+        }, { status: 401 })
       }
+      
+      // Clear failed attempts on successful login
+      await clearRateLimit(clientIP)
       
       // Create session
       const sessionToken = generateSessionToken()

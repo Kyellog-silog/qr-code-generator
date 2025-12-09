@@ -20,7 +20,8 @@ import {
   QrCode,
   X,
   Download,
-  Lock
+  Lock,
+  MapPin
 } from "lucide-react"
 import { ThemeToggle } from "@/components/theme-toggle"
 import Link from "next/link"
@@ -53,6 +54,90 @@ export default function AdminPage() {
   // Form states
   const [editDestination, setEditDestination] = useState("")
   const [error, setError] = useState("")
+  
+  // Location editing state
+  const [editLocationAddress, setEditLocationAddress] = useState("")
+  const [editLocationType, setEditLocationType] = useState<"url" | "address" | "coordinates">("url")
+  const [editLocationLat, setEditLocationLat] = useState("")
+  const [editLocationLng, setEditLocationLng] = useState("")
+
+  // Helper functions for location detection and parsing
+  const isLocationUrl = (url: string): boolean => {
+    return url.includes("google.com/maps") || url.includes("maps.google.com")
+  }
+
+  const parseLocationUrl = (url: string): { type: "coordinates" | "address", lat?: string, lng?: string, address?: string } | null => {
+    // Pattern: ?q=lat,lng (coordinates)
+    const coordMatch = url.match(/[?&]q=(-?\d+\.?\d*),(-?\d+\.?\d*)/)
+    if (coordMatch) {
+      return { type: "coordinates", lat: coordMatch[1], lng: coordMatch[2] }
+    }
+    
+    // Pattern: /search/?api=1&query=address (address search)
+    const addressMatch = url.match(/query=([^&]+)/)
+    if (addressMatch) {
+      return { type: "address", address: decodeURIComponent(addressMatch[1]) }
+    }
+    
+    return null
+  }
+
+  const buildLocationUrl = (type: "address" | "coordinates", address?: string, lat?: string, lng?: string): string => {
+    if (type === "coordinates" && lat && lng) {
+      return `https://www.google.com/maps?q=${lat},${lng}`
+    }
+    if (type === "address" && address) {
+      return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address.trim())}`
+    }
+    return ""
+  }
+
+  const startEditingLink = (link: LinkData) => {
+    setEditingSlug(link.slug)
+    setEditDestination(link.destination)
+    
+    // Check if it's a location URL and parse it
+    if (isLocationUrl(link.destination)) {
+      const parsed = parseLocationUrl(link.destination)
+      if (parsed?.type === "coordinates") {
+        setEditLocationType("coordinates")
+        setEditLocationLat(parsed.lat || "")
+        setEditLocationLng(parsed.lng || "")
+        setEditLocationAddress("")
+      } else if (parsed?.type === "address") {
+        setEditLocationType("address")
+        setEditLocationAddress(parsed.address || "")
+        setEditLocationLat("")
+        setEditLocationLng("")
+      } else {
+        setEditLocationType("url")
+      }
+    } else {
+      setEditLocationType("url")
+      setEditLocationAddress("")
+      setEditLocationLat("")
+      setEditLocationLng("")
+    }
+  }
+
+  const cancelEditing = () => {
+    setEditingSlug(null)
+    setEditDestination("")
+    setEditLocationType("url")
+    setEditLocationAddress("")
+    setEditLocationLat("")
+    setEditLocationLng("")
+  }
+
+  const getEditedDestination = (): string => {
+    if (editLocationType === "coordinates") {
+      return buildLocationUrl("coordinates", undefined, editLocationLat, editLocationLng)
+    }
+    if (editLocationType === "address") {
+      return buildLocationUrl("address", editLocationAddress)
+    }
+    return editDestination
+  }
 
   // Check auth on mount
   useEffect(() => {
@@ -112,7 +197,9 @@ export default function AdminPage() {
   }, [isAuthenticated])
 
   const updateLink = async (slug: string) => {
-    if (!editDestination.trim()) {
+    const destination = getEditedDestination()
+    
+    if (!destination.trim()) {
       setError("Destination is required")
       return
     }
@@ -121,7 +208,7 @@ export default function AdminPage() {
       const res = await fetch("/api/links", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slug, destination: editDestination.trim() }),
+        body: JSON.stringify({ slug, destination: destination.trim() }),
       })
 
       const data = await res.json()
@@ -131,8 +218,7 @@ export default function AdminPage() {
         return
       }
 
-      setEditingSlug(null)
-      setEditDestination("")
+      cancelEditing()
       fetchLinks()
     } catch (err) {
       setError("Failed to update link")
@@ -318,37 +404,118 @@ export default function AdminPage() {
                           >
                             <ExternalLink className="h-4 w-4" />
                           </a>
+                          {isLocationUrl(link.destination) && (
+                            <span className="flex items-center gap-1 text-xs text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded">
+                              <MapPin className="h-3 w-3" />
+                              Location
+                            </span>
+                          )}
                         </div>
 
                         {editingSlug === link.slug ? (
-                          <div className="flex gap-2 mt-2">
-                            <Input
-                              value={editDestination}
-                              onChange={(e) => setEditDestination(e.target.value)}
-                              placeholder="New destination URL"
-                              className="flex-1"
-                            />
-                            <Button
-                              size="sm"
-                              onClick={() => updateLink(link.slug)}
-                              className="bg-gradient-to-r from-emerald-500 to-cyan-500"
-                            >
-                              Save
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => {
-                                setEditingSlug(null)
-                                setEditDestination("")
-                              }}
-                            >
-                              Cancel
-                            </Button>
+                          <div className="space-y-2 mt-2">
+                            {/* Location-specific editor */}
+                            {isLocationUrl(link.destination) ? (
+                              <div className="space-y-2">
+                                <div className="flex gap-2">
+                                  <Button
+                                    size="sm"
+                                    variant={editLocationType === "address" ? "default" : "outline"}
+                                    onClick={() => setEditLocationType("address")}
+                                    className={editLocationType === "address" ? "bg-emerald-500 hover:bg-emerald-600" : ""}
+                                  >
+                                    Address
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant={editLocationType === "coordinates" ? "default" : "outline"}
+                                    onClick={() => setEditLocationType("coordinates")}
+                                    className={editLocationType === "coordinates" ? "bg-emerald-500 hover:bg-emerald-600" : ""}
+                                  >
+                                    Coordinates
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant={editLocationType === "url" ? "default" : "outline"}
+                                    onClick={() => setEditLocationType("url")}
+                                    className={editLocationType === "url" ? "bg-emerald-500 hover:bg-emerald-600" : ""}
+                                  >
+                                    Raw URL
+                                  </Button>
+                                </div>
+                                
+                                {editLocationType === "address" && (
+                                  <Input
+                                    value={editLocationAddress}
+                                    onChange={(e) => setEditLocationAddress(e.target.value)}
+                                    placeholder="Enter address (e.g., 123 Main St, New York, NY)"
+                                    className="flex-1"
+                                  />
+                                )}
+                                
+                                {editLocationType === "coordinates" && (
+                                  <div className="flex gap-2">
+                                    <Input
+                                      value={editLocationLat}
+                                      onChange={(e) => setEditLocationLat(e.target.value)}
+                                      placeholder="Latitude (e.g., 40.7128)"
+                                      className="flex-1"
+                                    />
+                                    <Input
+                                      value={editLocationLng}
+                                      onChange={(e) => setEditLocationLng(e.target.value)}
+                                      placeholder="Longitude (e.g., -74.0060)"
+                                      className="flex-1"
+                                    />
+                                  </div>
+                                )}
+                                
+                                {editLocationType === "url" && (
+                                  <Input
+                                    value={editDestination}
+                                    onChange={(e) => setEditDestination(e.target.value)}
+                                    placeholder="Google Maps URL"
+                                    className="flex-1"
+                                  />
+                                )}
+                              </div>
+                            ) : (
+                              /* Standard URL editor */
+                              <Input
+                                value={editDestination}
+                                onChange={(e) => setEditDestination(e.target.value)}
+                                placeholder="New destination URL"
+                                className="flex-1"
+                              />
+                            )}
+                            
+                            <div className="flex gap-2">
+                              <Button
+                                size="sm"
+                                onClick={() => updateLink(link.slug)}
+                                className="bg-gradient-to-r from-emerald-500 to-cyan-500"
+                              >
+                                Save
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={cancelEditing}
+                              >
+                                Cancel
+                              </Button>
+                            </div>
                           </div>
                         ) : (
                           <p className="text-sm text-muted-foreground truncate">
-                            → {link.destination}
+                            → {isLocationUrl(link.destination) ? (
+                              <span className="flex items-center gap-1">
+                                <MapPin className="h-3 w-3 inline" />
+                                {parseLocationUrl(link.destination)?.address || 
+                                 (parseLocationUrl(link.destination)?.lat && `${parseLocationUrl(link.destination)?.lat}, ${parseLocationUrl(link.destination)?.lng}`) ||
+                                 link.destination}
+                              </span>
+                            ) : link.destination}
                           </p>
                         )}
 
@@ -377,10 +544,7 @@ export default function AdminPage() {
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8"
-                          onClick={() => {
-                            setEditingSlug(link.slug)
-                            setEditDestination(link.destination)
-                          }}
+                          onClick={() => startEditingLink(link)}
                         >
                           <Edit2 className="h-4 w-4" />
                         </Button>

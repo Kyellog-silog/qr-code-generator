@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { storage, isProduction } from "@/lib/storage"
 import { localKV } from "@/lib/local-kv"
+import { isPlainText } from "@/lib/link-utils"
 
 export const runtime = "edge"
 
@@ -44,6 +45,12 @@ export async function GET(
 
     // Increment click count (fire and forget)
     incrementClicks(slug)
+
+    // If it's plain text, redirect to a display page instead of trying to navigate to it
+    if (isPlainText(linkData.destination)) {
+      const displayUrl = new URL(`/r/${slug}/view`, request.url)
+      return NextResponse.redirect(displayUrl, { status: 307 })
+    }
 
     // Redirect to the destination
     return NextResponse.redirect(linkData.destination, { status: 307 })

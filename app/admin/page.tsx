@@ -101,7 +101,16 @@ export default function AdminPage() {
   
   // Delete confirmation state
   const [deleteConfirmSlug, setDeleteConfirmSlug] = useState<string | null>(null)
+  const [deleteConfirmInput, setDeleteConfirmInput] = useState("")
   const [isDeleting, setIsDeleting] = useState(false)
+
+  // Reset confirmation input when dialog closes
+  const handleDeleteDialogChange = (open: boolean) => {
+    if (!open) {
+      setDeleteConfirmSlug(null)
+      setDeleteConfirmInput("")
+    }
+  }
 
   // Wrapper for buildLocationUrl to match previous function signature
   const buildLocationUrlWrapper = (type: "address" | "coordinates", address?: string, lat?: string, lng?: string): string => {
@@ -854,25 +863,44 @@ export default function AdminPage() {
       )}
 
       {/* Delete Confirmation Dialog */}
-      <AlertDialog open={!!deleteConfirmSlug} onOpenChange={(open) => !open && setDeleteConfirmSlug(null)}>
+      <AlertDialog open={!!deleteConfirmSlug} onOpenChange={handleDeleteDialogChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
               <Trash2 className="h-5 w-5 text-destructive" />
               Delete Link
             </AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete <span className="font-semibold text-foreground">/r/{deleteConfirmSlug}</span>?
-              <br /><br />
-              This action cannot be undone. Any QR codes pointing to this link will stop working.
+            <AlertDialogDescription asChild>
+              <div className="space-y-4">
+                <p>
+                  Are you sure you want to delete <span className="font-semibold text-foreground">/r/{deleteConfirmSlug}</span>?
+                </p>
+                <p className="text-destructive">
+                  ⚠️ This action cannot be undone. Any QR codes pointing to this link will stop working permanently.
+                </p>
+                <div className="pt-2">
+                  <Label htmlFor="confirm-delete" className="text-sm font-medium text-foreground">
+                    Type <span className="font-mono bg-muted px-1.5 py-0.5 rounded text-destructive">{deleteConfirmSlug}</span> to confirm:
+                  </Label>
+                  <Input
+                    id="confirm-delete"
+                    value={deleteConfirmInput}
+                    onChange={(e) => setDeleteConfirmInput(e.target.value)}
+                    placeholder="Enter slug to confirm"
+                    className="mt-2"
+                    autoComplete="off"
+                    autoFocus
+                  />
+                </div>
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => deleteConfirmSlug && deleteLink(deleteConfirmSlug)}
-              disabled={isDeleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={isDeleting || deleteConfirmInput !== deleteConfirmSlug}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50"
             >
               {isDeleting ? (
                 <>
@@ -882,7 +910,7 @@ export default function AdminPage() {
               ) : (
                 <>
                   <Trash2 className="h-4 w-4 mr-2" />
-                  Delete
+                  Delete Permanently
                 </>
               )}
             </AlertDialogAction>

@@ -274,7 +274,7 @@ export default function QRGenerator() {
     }))
   }
 
-  const generateQRString = () => {
+  const generateQRString = useCallback(() => {
     // If we have an active managed link, use its redirect URL
     if (activeManagedLink) {
       return activeManagedLink.redirectUrl
@@ -282,13 +282,13 @@ export default function QRGenerator() {
     
     switch (activeTab) {
       case "text":
-        return qrData.text
+        return debouncedQrData.text
       case "url":
-        return qrData.url.startsWith("http") ? qrData.url : `https://${qrData.url}`
+        return debouncedQrData.url.startsWith("http") ? debouncedQrData.url : `https://${debouncedQrData.url}`
       case "phone":
-        return qrData.phone.trim() ? `tel:${qrData.phone}` : ""
+        return debouncedQrData.phone.trim() ? `tel:${debouncedQrData.phone}` : ""
       case "location":
-        const { inputType, mapsUrl, latitude, longitude, address } = qrData.location
+        const { inputType, mapsUrl, latitude, longitude, address } = debouncedQrData.location
         
         // If using a direct Google Maps link
         if (inputType === "link" && mapsUrl.trim()) {
@@ -315,9 +315,9 @@ export default function QRGenerator() {
       default:
         return ""
     }
-  }
+  }, [activeTab, debouncedQrData, activeManagedLink])
 
-  const hasValidContent = () => {
+  const hasValidContent = useCallback(() => {
     switch (activeTab) {
       case "text":
         return qrData.text.trim().length > 0
@@ -334,7 +334,7 @@ export default function QRGenerator() {
       default:
         return false
     }
-  }
+  }, [activeTab, qrData])
 
   // Check if the current input is valid for QR generation
   const isValidForGeneration = useCallback((): boolean => {
@@ -392,7 +392,7 @@ export default function QRGenerator() {
     }
   }
 
-  const generateQRCode = async () => {
+  const generateQRCode = useCallback(async () => {
     const qrString = generateQRString()
     
     // Don't generate if empty or invalid format
@@ -411,8 +411,8 @@ export default function QRGenerator() {
           width: size,
           margin: 2,
           color: {
-            dark: qrColors.foreground,
-            light: qrColors.background,
+            dark: debouncedColors.foreground,
+            light: debouncedColors.background,
           },
         })
 
@@ -429,7 +429,7 @@ export default function QRGenerator() {
     } finally {
       setTimeout(() => setIsGenerating(false), 300)
     }
-  }
+  }, [generateQRString, isValidForGeneration, errorLevel, size, debouncedColors, activeManagedLink])
 
   const downloadQRCode = () => {
     if (qrCodeUrl) {
@@ -708,7 +708,7 @@ export default function QRGenerator() {
 
   useEffect(() => {
     generateQRCode()
-  }, [debouncedQrData, activeTab, errorLevel, size, debouncedColors, activeManagedLink])
+  }, [generateQRCode])
 
   const updateQRData = (field: keyof QRData, value: string) => {
     // Clear managed link when user modifies data

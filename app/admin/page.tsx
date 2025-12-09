@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { 
@@ -663,6 +664,19 @@ export default function AdminPage() {
                                   />
                                 )}
                               </div>
+                            ) : isPlainText(link.destination) ? (
+                              /* Plain text editor */
+                              <div className="space-y-2">
+                                <Textarea
+                                  value={editDestination}
+                                  onChange={(e) => setEditDestination(e.target.value)}
+                                  placeholder="Enter your message or text content"
+                                  className="flex-1 min-h-[80px]"
+                                />
+                                <p className="text-xs text-muted-foreground">
+                                  Plain text will be displayed on a dedicated page when scanned
+                                </p>
+                              </div>
                             ) : (
                               /* Standard URL editor */
                               <Input
@@ -703,6 +717,11 @@ export default function AdminPage() {
                                 {parseLocationUrl(link.destination)?.address || 
                                  (parseLocationUrl(link.destination)?.lat && `${parseLocationUrl(link.destination)?.lat}, ${parseLocationUrl(link.destination)?.lng}`) ||
                                  link.destination}
+                              </span>
+                            ) : isPlainText(link.destination) ? (
+                              <span className="flex items-center gap-1">
+                                <MessageSquare className="h-3 w-3 inline" />
+                                {link.destination.length > 50 ? link.destination.substring(0, 50) + "..." : link.destination}
                               </span>
                             ) : link.destination}
                           </p>

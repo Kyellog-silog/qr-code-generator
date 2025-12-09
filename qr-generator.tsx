@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Download, Smartphone, Phone, MessageSquare, MapPin, Globe, Link as LinkIcon, Copy, Check, History, Trash2, QrCode, Settings, Save, RefreshCw, ExternalLink, Loader2 } from "lucide-react"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { PasswordModal } from "@/components/password-modal"
+import { useDebouncedValue } from "@/hooks/use-debounce"
 
 interface QRData {
   text: string
@@ -101,6 +102,10 @@ export default function QRGenerator() {
   const [isAuthSetup, setIsAuthSetup] = useState(true) // Assume setup until checked
   const [showPasswordModal, setShowPasswordModal] = useState(false)
   const [pendingAction, setPendingAction] = useState<(() => void) | null>(null)
+
+  // Debounce QR data to avoid regenerating on every keystroke (300ms delay)
+  const debouncedQrData = useDebouncedValue(qrData, 300)
+  const debouncedColors = useDebouncedValue(qrColors, 300)
 
   // Load history from localStorage on mount
   useEffect(() => {
@@ -703,7 +708,7 @@ export default function QRGenerator() {
 
   useEffect(() => {
     generateQRCode()
-  }, [qrData, activeTab, errorLevel, size, qrColors, activeManagedLink])
+  }, [debouncedQrData, activeTab, errorLevel, size, debouncedColors, activeManagedLink])
 
   const updateQRData = (field: keyof QRData, value: string) => {
     // Clear managed link when user modifies data

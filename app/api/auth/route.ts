@@ -1,12 +1,8 @@
-import { kv } from "@vercel/kv"
 import { NextRequest, NextResponse } from "next/server"
-import { localKV } from "@/lib/local-kv"
+import { storage } from "@/lib/storage"
 import bcrypt from "bcryptjs"
 
 export const runtime = "edge"
-
-// Use Vercel KV/Upstash in production, local storage in development
-const isProduction = !!(process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL)
 
 // Rate limiting configuration
 const MAX_LOGIN_ATTEMPTS = 5 // Max attempts before lockout
@@ -17,30 +13,6 @@ interface RateLimitData {
   attempts: number
   firstAttempt: number
   lockedUntil?: number
-}
-
-// Storage abstraction
-const storage = {
-  async get<T>(key: string): Promise<T | null> {
-    if (isProduction) {
-      return await kv.get<T>(key)
-    }
-    return localKV.get(key) as T | null
-  },
-  async set(key: string, value: unknown): Promise<void> {
-    if (isProduction) {
-      await kv.set(key, value)
-    } else {
-      localKV.set(key, value)
-    }
-  },
-  async del(key: string): Promise<void> {
-    if (isProduction) {
-      await kv.del(key)
-    } else {
-      localKV.del(key)
-    }
-  },
 }
 
 // Get client IP for rate limiting

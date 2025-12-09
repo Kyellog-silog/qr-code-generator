@@ -1,5 +1,5 @@
-import { kv } from "@vercel/kv"
 import { NextRequest, NextResponse } from "next/server"
+import { storage, isProduction } from "@/lib/storage"
 import { localKV } from "@/lib/local-kv"
 
 export const runtime = "edge"
@@ -11,19 +11,13 @@ interface LinkData {
   clicks: number
 }
 
-// Use Vercel KV/Upstash in production, local storage in development
-const isProduction = !!(process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL)
-
 async function getLink(slug: string): Promise<LinkData | null> {
-  if (isProduction) {
-    return await kv.get<LinkData>(`link:${slug}`)
-  }
-  return localKV.get(`link:${slug}`) as LinkData | null
+  return storage.get<LinkData>(`link:${slug}`)
 }
 
 async function incrementClicks(slug: string): Promise<void> {
   if (isProduction) {
-    kv.hincrby(`link:${slug}`, "clicks", 1).catch(() => {})
+    storage.hincrby(`link:${slug}`, "clicks", 1).catch(() => {})
   } else {
     const data = localKV.get(`link:${slug}`) as LinkData | null
     if (data) {

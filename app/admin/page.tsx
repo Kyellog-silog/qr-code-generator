@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Skeleton } from "@/components/ui/skeleton"
 import { 
   Plus, 
   Trash2, 
@@ -22,7 +23,11 @@ import {
   Download,
   Lock,
   MapPin,
-  Phone
+  Phone,
+  Globe,
+  MessageSquare,
+  Search,
+  Filter
 } from "lucide-react"
 import { ThemeToggle } from "@/components/theme-toggle"
 import Link from "next/link"
@@ -64,6 +69,10 @@ export default function AdminPage() {
   
   // Phone editing state
   const [editPhoneNumber, setEditPhoneNumber] = useState("")
+  
+  // Search and filter state
+  const [searchQuery, setSearchQuery] = useState("")
+  const [filterType, setFilterType] = useState<"all" | "url" | "phone" | "sms" | "location">("all")
 
   // Helper functions for phone detection and parsing
   const isPhoneUrl = (url: string): boolean => {
@@ -81,7 +90,29 @@ export default function AdminPage() {
     return `tel:${cleanPhone}`
   }
 
-  // Helper functions for location detection and parsing
+  // Helper functions for type detection and parsing
+  const isUrlType = (url: string): boolean => {
+    return url.startsWith("http://") || url.startsWith("https://")
+  }
+
+  const isSmsUrl = (url: string): boolean => {
+    return url.toLowerCase().startsWith("sms:") || url.toLowerCase().startsWith("smsto:")
+  }
+
+  const parseSmsUrl = (url: string): { number: string; message?: string } => {
+    // Parse sms:+1234567890?body=Hello or smsto:+1234567890:Hello
+    const cleaned = url.replace(/^(sms:|smsto:)/i, "")
+    if (cleaned.includes("?body=")) {
+      const [number, rest] = cleaned.split("?body=")
+      return { number, message: decodeURIComponent(rest || "") }
+    }
+    if (cleaned.includes(":")) {
+      const [number, message] = cleaned.split(":")
+      return { number, message }
+    }
+    return { number: cleaned }
+  }
+
   const isLocationUrl = (url: string): boolean => {
     return url.includes("google.com/maps") || url.includes("maps.google.com")
   }
@@ -111,6 +142,33 @@ export default function AdminPage() {
     }
     return ""
   }
+
+  // Get the type of a link for filtering
+  const getLinkType = (destination: string): "url" | "phone" | "sms" | "location" => {
+    if (isPhoneUrl(destination)) return "phone"
+    if (isSmsUrl(destination)) return "sms"
+    if (isLocationUrl(destination)) return "location"
+    return "url"
+  }
+
+  // Filter and search links
+  const filteredLinks = links.filter(link => {
+    // Apply type filter
+    if (filterType !== "all" && getLinkType(link.destination) !== filterType) {
+      return false
+    }
+    
+    // Apply search query
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase()
+      return (
+        link.slug.toLowerCase().includes(query) ||
+        link.destination.toLowerCase().includes(query)
+      )
+    }
+    
+    return true
+  })
 
   const startEditingLink = (link: LinkData) => {
     setEditingSlug(link.slug)
@@ -392,7 +450,7 @@ export default function AdminPage() {
                 Your Links
               </CardTitle>
               <CardDescription>
-                {links.length} link{links.length !== 1 ? "s" : ""} total
+                {filteredLinks.length} of {links.length} link{links.length !== 1 ? "s" : ""}
               </CardDescription>
             </div>
             <Button variant="outline" size="sm" onClick={fetchLinks} disabled={loading}>
@@ -401,19 +459,116 @@ export default function AdminPage() {
             </Button>
           </CardHeader>
           <CardContent>
-            {loading ? (
-              <div className="text-center py-8 text-muted-foreground">
-                <RefreshCw className="h-8 w-8 animate-spin mx-auto mb-2" />
-                Loading links...
+            {/* Search and Filter Bar */}
+            <div className="flex flex-col sm:flex-row gap-3 mb-4">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search by slug or destination..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-9"
+                />
               </div>
-            ) : links.length === 0 ? (
+              <div className="flex gap-1 flex-wrap">
+                <Button
+                  size="sm"
+                  variant={filterType === "all" ? "default" : "outline"}
+                  onClick={() => setFilterType("all")}
+                  className={filterType === "all" ? "bg-secondary hover:bg-secondary/80" : ""}
+                >
+                  All
+                </Button>
+                <Button
+                  size="sm"
+                  variant={filterType === "url" ? "default" : "outline"}
+                  onClick={() => setFilterType("url")}
+                  className={filterType === "url" ? "bg-cyan-500 hover:bg-cyan-600" : ""}
+                >
+                  <Globe className="h-3 w-3 mr-1" />
+                  URL
+                </Button>
+                <Button
+                  size="sm"
+                  variant={filterType === "phone" ? "default" : "outline"}
+                  onClick={() => setFilterType("phone")}
+                  className={filterType === "phone" ? "bg-blue-500 hover:bg-blue-600" : ""}
+                >
+                  <Phone className="h-3 w-3 mr-1" />
+                  Phone
+                </Button>
+                <Button
+                  size="sm"
+                  variant={filterType === "sms" ? "default" : "outline"}
+                  onClick={() => setFilterType("sms")}
+                  className={filterType === "sms" ? "bg-purple-500 hover:bg-purple-600" : ""}
+                >
+                  <MessageSquare className="h-3 w-3 mr-1" />
+                  SMS
+                </Button>
+                <Button
+                  size="sm"
+                  variant={filterType === "location" ? "default" : "outline"}
+                  onClick={() => setFilterType("location")}
+                  className={filterType === "location" ? "bg-emerald-500 hover:bg-emerald-600" : ""}
+                >
+                  <MapPin className="h-3 w-3 mr-1" />
+                  Location
+                </Button>
+              </div>
+            </div>
+
+            {loading ? (
+              /* Skeleton Loading State */
+              <div className="space-y-4">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="p-4 rounded-lg border border-border bg-muted/30">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 space-y-3">
+                        <div className="flex items-center gap-2">
+                          <Skeleton className="h-6 w-24" />
+                          <Skeleton className="h-6 w-6 rounded" />
+                          <Skeleton className="h-5 w-16 rounded-full" />
+                        </div>
+                        <Skeleton className="h-4 w-3/4" />
+                        <div className="flex items-center gap-4">
+                          <Skeleton className="h-3 w-32" />
+                          <Skeleton className="h-3 w-20" />
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <Skeleton className="h-8 w-8 rounded" />
+                        <Skeleton className="h-8 w-8 rounded" />
+                        <Skeleton className="h-8 w-8 rounded" />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : filteredLinks.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
-                <LinkIcon className="h-12 w-12 mx-auto mb-3 opacity-50" />
-                <p>No links yet. Create your first one above!</p>
+                {links.length === 0 ? (
+                  <>
+                    <LinkIcon className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                    <p>No links yet. Create your first one above!</p>
+                  </>
+                ) : (
+                  <>
+                    <Search className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                    <p>No links match your search or filter.</p>
+                    <Button 
+                      variant="link" 
+                      onClick={() => { setSearchQuery(""); setFilterType("all"); }}
+                      className="mt-2"
+                    >
+                      Clear filters
+                    </Button>
+                  </>
+                )}
               </div>
             ) : (
               <div className="space-y-4">
-                {links.map((link) => (
+                {filteredLinks.map((link) => (
                   <div
                     key={link.slug}
                     className="p-4 rounded-lg border border-border bg-muted/30 hover:bg-muted/50 transition-colors"
@@ -452,6 +607,18 @@ export default function AdminPage() {
                             <span className="flex items-center gap-1 text-xs text-blue-500 bg-blue-500/10 px-2 py-0.5 rounded">
                               <Phone className="h-3 w-3" />
                               Phone
+                            </span>
+                          )}
+                          {isSmsUrl(link.destination) && (
+                            <span className="flex items-center gap-1 text-xs text-purple-500 bg-purple-500/10 px-2 py-0.5 rounded">
+                              <MessageSquare className="h-3 w-3" />
+                              SMS
+                            </span>
+                          )}
+                          {isUrlType(link.destination) && !isLocationUrl(link.destination) && (
+                            <span className="flex items-center gap-1 text-xs text-cyan-500 bg-cyan-500/10 px-2 py-0.5 rounded">
+                              <Globe className="h-3 w-3" />
+                              URL
                             </span>
                           )}
                         </div>
